@@ -1,6 +1,6 @@
 # 开发与部署
 
-版本来源为 `web/package.json`。当前开发环境为 Windows amd64、Go 1.25.4、Node 22.17.0、pnpm 12.16.1。依赖与实际工具链约束见锁文件及 `go.mod`。
+版本来源为 `web/package.json`。开发宿主为 Windows amd64、Node 22.17.0、pnpm 12.16.1。Go 依赖要求 1.26，Go 会按 `go.mod` 获取项目工具链。
 
 ## 开发
 
@@ -8,4 +8,18 @@
 
 执行 `go run ./cmd/tunnelquay-server -listen 127.0.0.1:7000` 查看管理端。开发前端可执行 `pnpm --dir web dev`，API 代理到本机 7000 端口。
 
-执行 `go build ./cmd/tunnelquay-server` 和 `go build ./cmd/tunnelquay-client` 构建两个程序。客户端依赖不包含 SQLite 或前端。其余运行参数与验收结果随对应功能更新。
+执行 `go build ./cmd/tunnelquay-server` 和 `go build ./cmd/tunnelquay-client` 构建两个程序。客户端依赖不包含 SQLite 或前端。
+
+## 前台运行
+
+服务端执行 `tunnelquay-server -listen :7000 -data-dir data/server`。首次启动在终端显示临时管理密码和接入凭据，首次登录必须改密。管理密码以 bcrypt 哈希保存。服务端同时监听 TCP、UDP 7000；开放业务映射端口由用户自行配置防火墙。
+
+客户端执行 `tunnelquay-client -address 203.0.113.10 -port 7000 -credential <接入凭据>`，默认 QUIC。增加 `-transport tcp` 显式选择 TCP。客户端身份默认保存在用户配置目录下 `tunnelquay/device-id`，可用 `-data-dir` 指定。多实例使用不同身份目录。进程收到中断或 SIGTERM 后清理退出。
+
+Web 反向代理转发 HTTP 到 7000，保留 Host，并在 HTTPS 入口设置 `X-Forwarded-Proto: https`。客户端直连公网 IP 或域名和接入端口，不经过 HTTP 反向代理。在设置中单独保存接入地址，生成命令不使用浏览器域名推断。
+
+备份时先停止服务端，再复制完整数据目录（包含 SQLite 和 `identity.json`）；身份文件丢失会使现有凭据失效。恢复时使用同一目录。客户端升级和重启保留其身份目录。
+
+## 行为验证
+
+`go test ./...` 使用临时数据库与本地 TCP/UDP 服务，覆盖两种接入、TCP 双向传输与半关闭、三个 UDP 来源及 32 KB 数据报、配置切换与失败保留、停用、认证拒绝、改密和历史清理。`go vet ./...` 检查通过。当前运行验证平台为 Windows amd64；其他系统和架构尚未完成原生运行验证。
