@@ -89,7 +89,7 @@ func (c *Client) Run(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		slog.Error("接入断开，等待重连", "错误", err, "等待", delay)
+		slog.Error("接入断开，等待重连", "传输", c.Options.Transport, "错误类型", transport.ErrorKind(err), "错误", err, "等待", delay)
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
@@ -166,7 +166,8 @@ func (c *Client) Connect(ctx context.Context) error {
 		stream.SetDeadline(time.Now().Add(40 * time.Second))
 		m, err = codec.Receive()
 		if err != nil {
-			return err
+			slog.Warn("服务端控制连接接收失败", "传输", session.Network, "错误类型", transport.ErrorKind(err), "错误", err, "接入诊断", session.Diagnostics())
+			return fmt.Errorf("控制消息接收失败：%w", err)
 		}
 		reply := protocol.Message{Type: "ack", ID: m.ID, Revision: m.Revision}
 		switch m.Type {

@@ -196,6 +196,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	s.mu.Unlock()
 	var wg sync.WaitGroup
 	var firstErr error
+	var failedDirection string
 	var errMu sync.Mutex
 	copyOne := func(dst io.Writer, src io.Reader, up bool) {
 		defer wg.Done()
@@ -205,6 +206,10 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 			errMu.Lock()
 			if firstErr == nil {
 				firstErr = e
+				failedDirection = "客户端到来源"
+				if up {
+					failedDirection = "来源到客户端"
+				}
 			}
 			errMu.Unlock()
 			c.close()
@@ -217,7 +222,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	result, reason := "closed", "连接结束"
 	if firstErr != nil {
 		result = "interrupted"
-		reason = "连接中断：" + firstErr.Error()
+		reason = "连接中断（" + failedDirection + "）：" + firstErr.Error()
 	}
 	s.finish(c, result, reason)
 }

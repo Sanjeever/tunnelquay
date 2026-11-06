@@ -541,8 +541,8 @@ func (s *Server) sendUpgrade(p *peer, stream protocol.Stream, id string) {
 		if err = protocol.Write(stream, protocol.Message{Type: "upgrade_file", Revision: a.Size}); err != nil {
 			return
 		}
-		if _, err = io.CopyN(stream, f, a.Size); err != nil {
-			reportError("发行包传输中断", err)
+		if sent, e := io.CopyN(stream, f, a.Size); e != nil {
+			reportError("发行包传输中断", fmt.Errorf("任务 %s，已发送 %d/%d 字节：%w", id, sent, a.Size, e))
 		}
 		return
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -36,7 +37,10 @@ type assembly struct {
 
 func NewTCP(c net.Conn, server bool) (*Session, error) {
 	cfg := yamux.DefaultConfig()
-	cfg.LogOutput = io.Discard
+	cfg.LogOutput = nil
+	logger := slog.NewLogLogger(slog.Default().Handler(), slog.LevelWarn)
+	logger.SetPrefix("TCP 复用传输：")
+	cfg.Logger = logger
 	cfg.EnableKeepAlive = true
 	cfg.KeepAliveInterval = 10 * time.Second
 	cfg.ConnectionWriteTimeout = 10 * time.Second

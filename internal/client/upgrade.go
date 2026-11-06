@@ -147,8 +147,8 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 		status("failed", errors.New("升级传输元数据无效"))
 		return
 	}
-	if _, err = io.CopyN(f, stream, a.Size); err != nil {
-		status("failed", fmt.Errorf("下载发行包中断：%w", err))
+	if received, e := io.CopyN(f, stream, a.Size); e != nil {
+		status("failed", fmt.Errorf("下载发行包中断，已接收 %d/%d 字节：%w", received, a.Size, e))
 		return
 	}
 	if err = f.Sync(); err != nil {

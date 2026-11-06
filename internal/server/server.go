@@ -343,6 +343,9 @@ func (s *Server) servePeer(session *transport.Session) {
 		stream.SetDeadline(time.Now().Add(35 * time.Second))
 		msg, e := codec.Receive()
 		if e != nil {
+			if s.ctx.Err() == nil {
+				slog.Warn("设备控制连接接收失败", "设备", d.ID, "传输", session.Network, "错误类型", transport.ErrorKind(e), "错误", e, "接入诊断", session.Diagnostics())
+			}
 			return
 		}
 		if ch, ok := p.pending.Load(msg.ID); ok {
@@ -357,6 +360,7 @@ func (s *Server) servePeer(session *transport.Session) {
 	}
 }
 func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) {
+	started := time.Now()
 	if m.ID == "" {
 		m.ID = transport.RandomID()
 	}
@@ -364,7 +368,7 @@ func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) 
 	p.pending.Store(m.ID, ch)
 	defer p.pending.Delete(m.ID)
 	if err := p.control.Send(m); err != nil {
-		return protocol.Message{}, err
+		return protocol.Message{}, fmt.Errorf("发送控制消息 %s 失败（请求 %s，耗时 %s）：%w", m.Type, m.ID, time.Since(started), err)
 	}
 	select {
 	case reply := <-ch:
@@ -373,7 +377,7 @@ func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) 
 		}
 		return reply, nil
 	case <-time.After(10 * time.Second):
-		return protocol.Message{}, errors.New("客户端响应超时")
+		return protocol.Message{}, fmt.Errorf("等待客户端 %s 响应超时（请求 %s，耗时 %s）", m.Type, m.ID, time.Since(started))
 	case <-p.done:
 		return protocol.Message{}, errors.New("设备离线")
 	case <-s.ctx.Done():
@@ -387,6 +391,29 @@ func (s *Server) heartbeat(p *peer) {
 		start := time.Now()
 		_, err := s.request(p, protocol.Message{Type: "ping"})
 		if err != nil {
+			if s.ctx.Err() == nil {
+				s.mu.RLock()
+				var active int
+				var last time.Time
+				var up, down int64
+				for _, c := range s.connections {
+					if c.record.DeviceID == p.device.ID {
+						active++
+						c.mu.Lock()
+						up += c.record.Up
+						down += c.record.Down
+						if c.last.After(last) {
+							last = c.last
+						}
+						c.mu.Unlock()
+					}
+				}
+				s.mu.RUnlock()
+				slog.Warn("设备心跳失败，关闭接入", "设备", p.device.ID, "传输", p.session.Network, "错误", err, "等待", time.Since(start), "活动连接", active, "最近业务活动", last, "业务上行字节", up, "业务下行字节", down, "接入诊断", p.session.Diagnostics())
+			}
+			if p.session.QUIC != nil {
+				p.session.QUIC.CloseWithError(2, "心跳检测失败："+err.Error())
+			}
 			p.session.Close()
 			return
 		}
