@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+:root { font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif; color: #171717; background: #fafafa; font-size: 14px; --surface: #fff; --border: #e5e5e5; --muted: #737373; --radius: 6px; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+button,input,select { font: inherit; }
+.shell { display: grid; grid-template-columns: 200px minmax(0,1fr); min-height: 100vh; }
+aside { background: var(--surface); border-right: 1px solid var(--border); padding: 28px 16px; }
+aside strong { display: block; padding: 0 12px 30px; font-size: 17px; letter-spacing: -.5px; }
+nav { display: grid; gap: 4px; }
+nav a { padding: 10px 12px; color: var(--muted); text-decoration: none; border-radius: var(--radius); }
+nav a.active { color: #171717; background: #f1f1f1; }
+main { padding: 32px; min-width: 0; }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+h1 { font-size: 23px; font-weight: 550; letter-spacing: -.5px; margin: 0; }
+.empty { padding: 64px 20px; text-align: center; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+@media(max-width: 700px) { .shell { grid-template-columns: 1fr; } aside { padding: 16px; border-right: 0; border-bottom: 1px solid var(--border); } aside strong { padding: 0 0 16px; } nav { display: flex; } main { padding: 20px 16px; } }

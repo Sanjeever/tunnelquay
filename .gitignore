@@ -1,0 +1,13 @@
+/data/
+/bin/
+/web/node_modules/
+/internal/webui/dist/
+*.db
+*.db-shm
+*.db-wal
+*.key
+*.pem
+*.exe
+/test-results/
+/web/playwright-report/
+*.tsbuildinfo
