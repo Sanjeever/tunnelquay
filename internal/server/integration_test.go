@@ -93,6 +93,26 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	}
 	probe.Close()
 }
+
+func TestClientReportsAuthenticationErrorOnBothTransports(t *testing.T) {
+	s := testServer(t)
+	bad := *s.Identity
+	bad.Secret = strings.Repeat("0", 48)
+	for _, network := range []string{"tcp", "quic"} {
+		t.Run(network, func(t *testing.T) {
+			c, err := client.New(client.Options{Address: s.Addr(), Credential: bad.Credential(), Transport: network, DataDir: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			err = c.Connect(ctx)
+			if err == nil || !strings.Contains(err.Error(), "接入凭据错误") {
+				t.Fatalf("认证错误未提供原因：%v", err)
+			}
+		})
+	}
+}
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Options{Listen: "127.0.0.1:0", DataDir: t.TempDir()})

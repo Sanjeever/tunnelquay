@@ -254,7 +254,12 @@ func (s *Server) servePeer(session *transport.Session) {
 	if err != nil {
 		return
 	}
-	reject := func(code, msg string) { codec.Send(protocol.Message{Type: "error", Code: code, Error: msg}) }
+	reject := func(code, msg string) {
+		codec.Send(protocol.Message{Type: "error", Code: code, Error: msg})
+		if session.QUIC != nil {
+			session.QUIC.CloseWithError(1, code+"："+msg)
+		}
+	}
 	if m.Type != "hello" || m.Hello == nil {
 		reject("invalid_hello", "接入握手无效")
 		return
