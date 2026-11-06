@@ -8,7 +8,7 @@
 
 执行 `go run ./cmd/tunnelquay-server -listen 127.0.0.1:7000` 查看管理端。开发前端可执行 `pnpm --dir web dev`，API 代理到本机 7000 端口。
 
-执行 `go build ./cmd/tunnelquay-server` 和 `go build ./cmd/tunnelquay-client` 构建两个程序。客户端依赖不包含 SQLite 或前端。
+执行 `go build -o bin/ ./cmd/tunnelquay-server ./cmd/tunnelquay-client` 构建两个程序，输出到 `bin`。客户端依赖不包含 SQLite 或前端。
 
 ## 前台运行
 
