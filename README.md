@@ -99,4 +99,6 @@ Go Module 为 `github.com/Sanjeever/tunnelquay`。前端依赖通过 pnpm 管理
 
 本地检查使用 `go test ./...`、`go vet ./...` 和 `pnpm --dir web build`。真实浏览器验收、升级替换和交叉构建命令见开发文档。未配置正式发行密钥时，可以构建运行程序；远程升级验证会明确拒绝未建立信任的发行包。
 
+已完成 sg1 的 Windows 客户端与 Linux 服务端公网试运行，以及 Linux 原生客户端和两平台实际升级。基础功能通过；当前公网路径存在 UDP 丢包、大报文不可达及慢链路长传输中断，稳定性验收仍有缺口，见 [公网试运行记录](docs/wan-test-2026-11-06.md)。
+
 仓库地址：[Sanjeever/tunnelquay](https://github.com/Sanjeever/tunnelquay)。
