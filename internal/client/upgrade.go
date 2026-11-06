@@ -99,7 +99,7 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 	}
 	m, a, err := update.Verify(task.Package, runtime.GOOS, runtime.GOARCH)
 	if err != nil {
-		status("failed", err)
+		status("failed", fmt.Errorf("升级校验失败：%w", err))
 		return
 	}
 	if m.Version != task.Version {

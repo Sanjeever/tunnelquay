@@ -214,23 +214,43 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
           </form>
         )}
         <form onSubmit={importPackage}>
-          <label>
-            发行清单
-            <input name="manifest" type="file" accept=".json" required />
-          </label>
-          <label>
-            清单签名
-            <input name="signature" type="file" accept=".sig" required />
-          </label>
-          <label>
-            客户端归档
-            <input name="archive" type="file" accept=".zip,.gz" required />
-          </label>
+          <PackageFile label="发行清单" name="manifest" accept=".json" />
+          <PackageFile label="清单签名" name="signature" accept=".sig" />
+          <PackageFile label="客户端归档" name="archive" accept=".zip,.gz" />
           <Button type="submit" variant="outline" disabled={busy}>
             导入并验证
           </Button>
         </form>
       </details>
     </div>
+  );
+}
+
+function PackageFile({
+  label,
+  name,
+  accept,
+}: {
+  label: string;
+  name: string;
+  accept: string;
+}) {
+  const [filename, setFilename] = useState("");
+  return (
+    <label>
+      {label}
+      <span className="file-picker">
+        <span className="button button-outline">选择文件</span>
+        <span className="muted file-name">{filename || "未选择文件"}</span>
+        <input
+          type="file"
+          name={name}
+          accept={accept}
+          required
+          aria-label={label}
+          onChange={(e) => setFilename(e.target.files?.[0]?.name || "")}
+        />
+      </span>
+    </label>
   );
 }

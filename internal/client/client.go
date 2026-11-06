@@ -47,8 +47,20 @@ func New(opts Options) (*Client, error) {
 	b, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		b = []byte(transport.RandomID())
-		if err = os.WriteFile(path, b, 0600); err != nil {
+		file, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if e != nil {
+			return nil, fmt.Errorf("创建设备身份失败，请确认没有同时首次启动的实例：%w", e)
+		}
+		_, err = file.Write(b)
+		if err == nil {
+			err = file.Sync()
+		}
+		closeErr := file.Close()
+		if err != nil {
 			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 	} else if err != nil {
 		return nil, err
@@ -117,6 +129,9 @@ func (c *Client) Connect(ctx context.Context) error {
 	}
 	if m.Type != "welcome" {
 		return fmt.Errorf("接入被拒绝 [%s]：%s", m.Code, m.Error)
+	}
+	if err = protocol.Negotiate(protocol.Hello{Protocols: []int{m.Protocol}, Capabilities: m.Capabilities}); err != nil {
+		return fmt.Errorf("服务端协商结果无效：%w", err)
 	}
 	stream.SetDeadline(time.Time{})
 	c.mu.Lock()

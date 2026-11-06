@@ -34,6 +34,7 @@ type Tunnel struct {
 	Error        string           `json:"error"`
 	Status       string           `json:"status"`
 	TargetStatus string           `json:"target_status"`
+	TargetError  string           `json:"target_error"`
 	Connections  int              `json:"connections"`
 	Up           int64            `json:"up"`
 	Down         int64            `json:"down"`
@@ -274,6 +275,19 @@ func (s *Store) History(f Filter) ([]Connection, int, error) {
 func (s *Store) Prune(now time.Time) error {
 	_, err := s.DB.Exec("DELETE FROM history WHERE id IN (SELECT id FROM history WHERE ended IS NOT NULL AND ended<? LIMIT 1000)", now.Add(-7*24*time.Hour).UTC().Format(time.RFC3339Nano))
 	return err
+}
+func (s *Store) SaveTotals(totals map[string][2]int64) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for id, total := range totals {
+		if _, err = tx.Exec("UPDATE tunnels SET payload=json_set(payload,'$.up',?,'$.down',?) WHERE id=?", total[0], total[1], id); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (c Connection) String() string {
 	return fmt.Sprintf("%s %s → %s", c.Protocol, c.Source, c.Target)

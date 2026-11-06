@@ -58,7 +58,7 @@ export function State({ value }: { value: string }) {
     running: "监听就绪",
     offline: "设备离线",
     disabled: "已停用",
-    failed: "应用失败",
+    failed: "失败",
     unknown: "未知",
     reachable: "可达",
     active: "进行中",

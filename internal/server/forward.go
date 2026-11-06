@@ -17,18 +17,18 @@ import (
 )
 
 type activeConnection struct {
-	mu               sync.Mutex
-	record           store.Connection
-	stream           protocol.Stream
-	local            net.Conn
-	runtime          *runtimeTunnel
-	udpID            uint64
-	source           *net.UDPAddr
-	last             time.Time
-	prevUp, prevDown int64
-	once             sync.Once
-	packets          chan []byte
-	done             chan struct{}
+	mu        sync.Mutex
+	record    store.Connection
+	stream    protocol.Stream
+	local     net.Conn
+	runtime   *runtimeTunnel
+	udpID     uint64
+	source    *net.UDPAddr
+	publicUDP *net.UDPConn
+	last      time.Time
+	once      sync.Once
+	packets   chan []byte
+	done      chan struct{}
 }
 
 func reportError(msg string, err error) { slog.Error(msg, "错误", err) }
@@ -48,10 +48,8 @@ func (c *activeConnection) close() {
 func (s *Server) newConnection(r *runtimeTunnel, network, source string, local net.Conn, addr *net.UDPAddr) *activeConnection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.historyMu.Lock()
-	full := len(s.finished) >= 4096
-	s.historyMu.Unlock()
-	if s.closed || r.retired || len(s.connections) >= 1024 || full {
+	full := s.historyBacklog.Load() >= 4096
+	if s.closed || r.retired || (r.cfg.Protocol != "both" && r.cfg.Protocol != network) || len(s.connections) >= 1024 || full {
 		return nil
 	}
 	cfg := r.cfg
@@ -62,6 +60,7 @@ func (s *Server) newConnection(r *runtimeTunnel, network, source string, local n
 			return nil
 		}
 		c.udpID = s.nextUDP.Add(1)
+		c.publicUDP = r.udp
 		c.packets = make(chan []byte, 64)
 		r.sessions[source] = c
 		s.udpConnections[c.udpID] = c
@@ -81,6 +80,12 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 	}
 	delete(s.connections, c.record.ID)
 	if c.udpID != 0 {
+		c.mu.Lock()
+		for len(c.packets) > 0 {
+			b := <-c.packets
+			s.udpQueuedBytes.Add(-int64(len(b)))
+		}
+		c.mu.Unlock()
 		delete(s.udpConnections, c.udpID)
 		delete(c.runtime.sessions, c.record.Source)
 	}
@@ -97,13 +102,15 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 		t.Down += rec.Down
 		if result == "failed" && t.Applied != nil && t.Applied.Revision == rec.Revision {
 			t.TargetStatus = "failed"
-			t.Error = reason
+			t.TargetError = reason
 		} else if rec.Up+rec.Down > 0 && t.Applied != nil && t.Applied.Revision == rec.Revision {
 			t.TargetStatus = "reachable"
+			t.TargetError = ""
 		}
 	}
 	s.historyMu.Lock()
 	s.finished = append(s.finished, rec)
+	s.historyBacklog.Add(1)
 	s.historyMu.Unlock()
 }
 func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, error) {
@@ -142,9 +149,9 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 	stream.SetDeadline(time.Time{})
 	return stream, nil
 }
-func (s *Server) acceptTCP(r *runtimeTunnel, p *peer) {
+func (s *Server) acceptTCP(r *runtimeTunnel, p *peer, listener net.Listener) {
 	for {
-		conn, err := r.tcp.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			return
 		}
@@ -184,6 +191,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	s.mu.Lock()
 	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
 		t.TargetStatus = "reachable"
+		t.TargetError = ""
 	}
 	s.mu.Unlock()
 	var wg sync.WaitGroup
@@ -213,10 +221,10 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	}
 	s.finish(c, result, reason)
 }
-func (s *Server) acceptUDP(r *runtimeTunnel, p *peer) {
+func (s *Server) acceptUDP(r *runtimeTunnel, p *peer, conn *net.UDPConn) {
 	b := make([]byte, 65535)
 	for {
-		n, addr, err := r.udp.ReadFromUDP(b)
+		n, addr, err := conn.ReadFromUDP(b)
 		if err != nil {
 			return
 		}
@@ -235,11 +243,23 @@ func (s *Server) acceptUDP(r *runtimeTunnel, p *peer) {
 			}
 			s.wg.Go(func() { s.forwardUDP(c, p) })
 		}
-		packet := append([]byte(nil), b[:n]...)
-		select {
-		case c.packets <- packet:
-		default:
+		if s.udpQueuedBytes.Add(int64(n)) > 16<<20 {
+			s.udpQueuedBytes.Add(-int64(n))
+			continue
 		}
+		c.mu.Lock()
+		select {
+		case <-c.done:
+			s.udpQueuedBytes.Add(-int64(n))
+		default:
+			packet := append([]byte(nil), b[:n]...)
+			select {
+			case c.packets <- packet:
+			default:
+				s.udpQueuedBytes.Add(-int64(n))
+			}
+		}
+		c.mu.Unlock()
 	}
 }
 func writePacket(w io.Writer, b []byte) error {
@@ -290,6 +310,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 	for {
 		select {
 		case b := <-c.packets:
+			s.udpQueuedBytes.Add(-int64(len(b)))
 			if p.session.QUIC != nil {
 				data := make([]byte, 8+len(b))
 				binary.BigEndian.PutUint64(data, c.udpID)
@@ -323,7 +344,7 @@ func (s *Server) deliverUDP(c *activeConnection, b []byte) {
 		return
 	default:
 	}
-	n, err := c.runtime.udp.WriteToUDP(b, c.source)
+	n, err := c.publicUDP.WriteToUDP(b, c.source)
 	if err != nil {
 		return
 	}
@@ -334,6 +355,7 @@ func (s *Server) deliverUDP(c *activeConnection, b []byte) {
 	s.mu.Lock()
 	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
 		t.TargetStatus = "reachable"
+		t.TargetError = ""
 	}
 	s.mu.Unlock()
 }
@@ -361,6 +383,10 @@ func (s *Server) flushHistory() error {
 	defer s.flushMu.Unlock()
 	s.mu.RLock()
 	items := make([]store.Connection, 0, len(s.connections))
+	totals := map[string][2]int64{}
+	for id, t := range s.tunnels {
+		totals[id] = [2]int64{t.Up, t.Down}
+	}
 	for _, c := range s.connections {
 		c.mu.Lock()
 		items = append(items, c.record)
@@ -378,5 +404,6 @@ func (s *Server) flushHistory() error {
 		s.historyMu.Unlock()
 		return err
 	}
-	return nil
+	s.historyBacklog.Add(-int64(len(ended)))
+	return s.Store.SaveTotals(totals)
 }

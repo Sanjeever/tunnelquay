@@ -45,11 +45,18 @@ type Server struct {
 	generations       map[string][]*runtimeTunnel
 	udpConnections    map[uint64]*activeConnection
 	nextUDP           atomic.Uint64
+	udpQueuedBytes    atomic.Int64
+	historyBacklog    atomic.Int64
+	peerSlots         chan struct{}
+	fileSlots         chan struct{}
+	rateSamples       map[string][2]int64
+	rateSampleAt      time.Time
 	connections       map[string]*activeConnection
 	sessions          map[string]loginSession
 	loginAttempts     int
 	loginWindow       time.Time
 	listener          net.Listener
+	packet            net.PacketConn
 	quicListener      *quic.Listener
 	http              *http.Server
 	ctx               context.Context
@@ -73,6 +80,10 @@ func New(opts Options) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{Options: opts, Store: db, Identity: id, peers: map[string]*peer{}, devices: map[string]store.Device{}, tunnels: map[string]*store.Tunnel{}, running: map[string]*runtimeTunnel{}, generations: map[string][]*runtimeTunnel{}, udpConnections: map[uint64]*activeConnection{}, connections: map[string]*activeConnection{}, sessions: map[string]loginSession{}, ctx: ctx, cancel: cancel}
+	s.peerSlots = make(chan struct{}, 128)
+	s.fileSlots = make(chan struct{}, 2)
+	s.rateSamples = map[string][2]int64{}
+	s.rateSampleAt = time.Now()
 	fail := func(e error) (*Server, error) { cancel(); db.Close(); return nil, e }
 	var devices []store.Device
 	if err = db.All("devices", &devices); err != nil {
@@ -91,6 +102,9 @@ func New(opts Options) (*Server, error) {
 		t.Status = "offline"
 		t.TargetStatus = "unknown"
 		t.Connections = 0
+		t.UpRate = 0
+		t.DownRate = 0
+		s.rateSamples[t.Desired.ID] = [2]int64{t.Up, t.Down}
 		s.tunnels[t.Desired.ID] = &t
 	}
 	if err = s.initAdmin(); err != nil {
@@ -99,14 +113,22 @@ func New(opts Options) (*Server, error) {
 	return s, nil
 }
 func (s *Server) Start() error {
-	l, err := net.Listen("tcp", s.Options.Listen)
+	lc := transport.ListenConfig()
+	l, err := lc.Listen(s.ctx, "tcp", s.Options.Listen)
 	if err != nil {
 		return err
 	}
 	s.listener = l
-	ql, err := quic.ListenAddr(l.Addr().String(), s.Identity.TLS(), transport.QUICConfig())
+	packet, err := lc.ListenPacket(s.ctx, "udp", l.Addr().String())
 	if err != nil {
 		l.Close()
+		return fmt.Errorf("UDP 接入监听失败：%w", err)
+	}
+	s.packet = packet
+	ql, err := quic.Listen(packet, s.Identity.TLS(), transport.QUICConfig())
+	if err != nil {
+		l.Close()
+		packet.Close()
 		return fmt.Errorf("QUIC 监听失败：%w", err)
 	}
 	s.quicListener = ql
@@ -133,7 +155,14 @@ func (s *Server) Start() error {
 			if e != nil {
 				return
 			}
+			select {
+			case s.peerSlots <- struct{}{}:
+			default:
+				c.Close()
+				continue
+			}
 			s.wg.Go(func() {
+				defer func() { <-s.peerSlots }()
 				c.SetDeadline(time.Now().Add(10 * time.Second))
 				tc := c.(*tls.Conn)
 				if e := tc.HandshakeContext(s.ctx); e != nil {
@@ -156,7 +185,13 @@ func (s *Server) Start() error {
 			if e != nil {
 				return
 			}
-			s.wg.Go(func() { s.servePeer(transport.NewQUIC(c)) })
+			select {
+			case s.peerSlots <- struct{}{}:
+			default:
+				c.CloseWithError(1, "设备接入达到并发上限")
+				continue
+			}
+			s.wg.Go(func() { defer func() { <-s.peerSlots }(); s.servePeer(transport.NewQUIC(c)) })
 		}
 	})
 	s.wg.Go(s.maintenance)
@@ -171,6 +206,9 @@ func (s *Server) Close() error {
 	}
 	if s.quicListener != nil {
 		s.quicListener.Close()
+	}
+	if s.packet != nil {
+		s.packet.Close()
 	}
 	if s.http != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

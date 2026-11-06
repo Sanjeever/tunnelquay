@@ -163,9 +163,12 @@ export function Tunnels() {
                   </td>
                   <td>
                     <State value={t.status} />
-                    {t.error && (
-                      <div className="error small compact" title={t.error}>
-                        配置或转发错误
+                    {(t.error || t.target_error) && (
+                      <div
+                        className="error small compact"
+                        title={t.error || t.target_error}
+                      >
+                        {t.error ? "配置应用失败" : "目标连接失败"}
                       </div>
                     )}
                     {t.applied && t.applied.revision !== t.desired.revision && (
@@ -184,6 +187,7 @@ export function Tunnels() {
                       role="switch"
                       aria-label={`启用 ${t.desired.name}`}
                       checked={t.desired.enabled}
+                      disabled={changing === t.desired.id}
                       onChange={() => void toggle(t)}
                     />
                   </td>
@@ -355,6 +359,7 @@ export function Tunnels() {
             </dd>
           </dl>
           <ErrorMessage message={detail.error} />
+          <ErrorMessage message={detail.target_error} />
           <footer>
             <Button asChild variant="outline">
               <Link

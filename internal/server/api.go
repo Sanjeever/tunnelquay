@@ -100,6 +100,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("POST /api/releases/download", s.downloadRelease)
 	protected.HandleFunc("GET /api/devices/{id}/upgrades", s.upgrades)
 	protected.HandleFunc("POST /api/devices/{id}/upgrades", s.createUpgrade)
+	protected.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		apiError(w, 404, "not_found", errors.New("接口不存在"))
+	})
 	mux.Handle("/api/", s.requireAuth(protected))
 }
 func checkOrigin(r *http.Request) bool {
@@ -318,6 +321,14 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if from != "" {
+		value, _ := time.Parse(time.RFC3339Nano, from)
+		from = value.UTC().Format(time.RFC3339Nano)
+	}
+	if to != "" {
+		value, _ := time.Parse(time.RFC3339Nano, to)
+		to = value.UTC().Format(time.RFC3339Nano)
+	}
 	if err := s.flushHistory(); err != nil {
 		apiError(w, 500, "storage_failed", err)
 		return
@@ -357,7 +368,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Address != "" {
 		u, err := url.Parse("tcp://" + req.Address)
-		if err != nil || u.Hostname() == "" || u.Port() == "" || u.Path != "" {
+		if err != nil || u.Hostname() == "" || u.Port() == "" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Hostname(), "'\"`$; ") {
 			apiError(w, 400, "invalid_address", errors.New("客户端接入地址须包含主机和端口"))
 			return
 		}

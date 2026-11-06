@@ -23,7 +23,7 @@ export function Devices() {
       const address = new URL(`tcp://${settings.public_address}`);
       setCopied(false);
       setCommand(
-        `tunnelquay-client -address ${address.hostname} -port ${address.port} -credential ${settings.credential}`,
+        `tunnelquay-client -address ${address.hostname.replace(/^\[|\]$/g, "")} -port ${address.port} -credential ${settings.credential}`,
       );
     } catch (e) {
       setError((e as Error).message);

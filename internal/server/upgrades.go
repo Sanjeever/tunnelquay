@@ -149,7 +149,7 @@ func (s *Server) listReleases(w http.ResponseWriter, r *http.Request) {
 		for _, osName := range []string{"linux", "darwin", "windows"} {
 			for _, arch := range []string{"amd64", "arm64"} {
 				entry, e := s.cached(v.Name(), osName, arch)
-				if e == nil {
+				if e == nil && semver.Prerelease("v"+entry.Version) == "" {
 					items = append(items, entry)
 				}
 			}
@@ -511,6 +511,13 @@ func (s *Server) acceptClientStreams(p *peer) {
 	}
 }
 func (s *Server) sendUpgrade(p *peer, stream protocol.Stream, id string) {
+	select {
+	case s.fileSlots <- struct{}{}:
+		defer func() { <-s.fileSlots }()
+	default:
+		protocol.Write(stream, protocol.Message{Error: "发行包传输达到并发上限，请稍后重试"})
+		return
+	}
 	var tasks []update.Task
 	if err := s.Store.All("upgrades", &tasks); err != nil {
 		protocol.Write(stream, protocol.Message{Error: "查询升级任务失败"})

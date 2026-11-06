@@ -83,6 +83,18 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
   await page.getByRole("link", { name: "设备", exact: true }).click();
   await expect(page.getByText("在线", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "客户端升级", exact: true }).click();
+  await expect(page.getByText("当前构建未配置正式发行验证公钥")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "发起升级", exact: true }),
+  ).toBeDisabled();
+  await page.getByText("发行包", { exact: true }).click();
+  await expect(page.getByLabel("发行清单", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/upgrade-desktop.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: /重命名/ }).click();
   await page.getByLabel("设备名称").fill("本地 QUIC 设备");
   await page.getByRole("button", { name: "保存", exact: true }).click();

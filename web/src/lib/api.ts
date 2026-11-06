@@ -70,6 +70,7 @@ export interface Tunnel {
   error: string;
   status: string;
   target_status: string;
+  target_error: string;
   connections: number;
   up: number;
   down: number;

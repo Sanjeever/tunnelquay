@@ -20,7 +20,11 @@ func Handler() http.Handler {
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if _, err := fs.Stat(root, name); err != nil && !strings.Contains(name, ".") {
+		if _, err := fs.Stat(root, name); err != nil {
+			if strings.Contains(name, ".") {
+				http.Error(w, "资源不存在", http.StatusNotFound)
+				return
+			}
 			r.URL.Path = "/"
 		}
 		static.ServeHTTP(w, r)

@@ -50,17 +50,20 @@ func validateConfig(c protocol.Config) error {
 	return nil
 }
 func bind(cfg protocol.Config) (*runtimeTunnel, error) {
+	return prepareBind(cfg, nil)
+}
+func prepareBind(cfg protocol.Config, old *runtimeTunnel) (*runtimeTunnel, error) {
 	r := &runtimeTunnel{cfg: cfg, sessions: map[string]*activeConnection{}}
 	addr := net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.PublicPort))
 	var err error
 	lc := transport.ListenConfig()
-	if cfg.Protocol == "tcp" || cfg.Protocol == "both" {
+	if (cfg.Protocol == "tcp" || cfg.Protocol == "both") && (old == nil || old.tcp == nil) {
 		r.tcp, err = lc.Listen(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("TCP 公网端口监听失败：%w", err)
 		}
 	}
-	if cfg.Protocol == "udp" || cfg.Protocol == "both" {
+	if (cfg.Protocol == "udp" || cfg.Protocol == "both") && (old == nil || old.udp == nil) {
 		p, e := lc.ListenPacket(context.Background(), "udp", addr)
 		if e == nil {
 			r.udp = p.(*net.UDPConn)
@@ -189,18 +192,26 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	s.mu.Lock()
 	cfg := t.Desired
 	old := s.running[cfg.ID]
-	reuse := old != nil && old.cfg.Protocol == cfg.Protocol && old.cfg.PublicPort == cfg.PublicPort
+	reuse := old != nil && old.cfg.PublicPort == cfg.PublicPort
 	var err error
 	if reuse && prepared != nil {
 		prepared.close()
 		prepared = nil
 	}
-	if !reuse && prepared == nil {
-		prepared, err = bind(cfg)
+	if prepared == nil {
+		var shared *runtimeTunnel
+		if reuse {
+			shared = old
+		}
+		prepared, err = prepareBind(cfg, shared)
 	}
 	s.mu.Unlock()
 	if err == nil {
-		_, err = s.request(p, protocol.Message{Type: "prepare", Config: &cfg, Revision: cfg.Revision})
+		var reply protocol.Message
+		reply, err = s.request(p, protocol.Message{Type: "prepare", Config: &cfg, Revision: cfg.Revision})
+		if err == nil && (reply.Type != "ack" || reply.Revision != cfg.Revision) {
+			err = errors.New("客户端配置确认版本不匹配")
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,6 +236,7 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	updated.Status = "running"
 	if t.Applied == nil || t.Applied.Host != cfg.Host || t.Applied.TargetPort != cfg.TargetPort || t.Applied.Protocol != cfg.Protocol {
 		updated.TargetStatus = "unknown"
+		updated.TargetError = ""
 	}
 	if err = s.Store.Put("tunnels", cfg.ID, updated); err != nil {
 		if prepared != nil {
@@ -236,6 +248,24 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	*t = updated
 	if reuse {
 		old.cfg = cfg
+		if prepared.tcp != nil {
+			old.tcp = prepared.tcp
+			listener := old.tcp
+			s.wg.Go(func() { s.acceptTCP(old, p, listener) })
+		}
+		if prepared.udp != nil {
+			old.udp = prepared.udp
+			conn := old.udp
+			s.wg.Go(func() { s.acceptUDP(old, p, conn) })
+		}
+		if cfg.Protocol == "udp" && old.tcp != nil {
+			old.tcp.Close()
+			old.tcp = nil
+		}
+		if cfg.Protocol == "tcp" && old.udp != nil && len(old.sessions) == 0 {
+			old.udp.Close()
+			old.udp = nil
+		}
 		return
 	}
 	if old != nil {
@@ -331,6 +361,7 @@ func (s *Server) DeleteTunnel(id string) error {
 	}
 	s.stopLocked(id)
 	delete(s.tunnels, id)
+	delete(s.rateSamples, id)
 	return nil
 }
 func (s *Server) portRange() (int, int, error) {
@@ -349,10 +380,12 @@ func (s *Server) portRange() (int, int, error) {
 }
 func (s *Server) startRuntime(r *runtimeTunnel, p *peer) {
 	if r.tcp != nil {
-		s.wg.Go(func() { s.acceptTCP(r, p) })
+		listener := r.tcp
+		s.wg.Go(func() { s.acceptTCP(r, p, listener) })
 	}
 	if r.udp != nil {
-		s.wg.Go(func() { s.acceptUDP(r, p) })
+		conn := r.udp
+		s.wg.Go(func() { s.acceptUDP(r, p, conn) })
 	}
 }
 func (s *Server) maintenance() {
@@ -378,6 +411,10 @@ func (s *Server) maintenance() {
 			for id, all := range s.generations {
 				next := all[:0]
 				for _, r := range all {
+					if !r.retired && r.cfg.Protocol == "tcp" && r.udp != nil && len(r.sessions) == 0 {
+						r.udp.Close()
+						r.udp = nil
+					}
 					if r.retired && len(r.sessions) == 0 {
 						r.close()
 					} else {
@@ -386,21 +423,26 @@ func (s *Server) maintenance() {
 				}
 				s.generations[id] = next
 			}
-			for _, t := range s.tunnels {
-				var up, down int64
-				for _, c := range s.connections {
-					if c.record.TunnelID == t.Desired.ID {
-						c.mu.Lock()
-						up += c.record.Up - c.prevUp
-						down += c.record.Down - c.prevDown
-						c.prevUp = c.record.Up
-						c.prevDown = c.record.Down
-						c.mu.Unlock()
-					}
-				}
-				t.UpRate = float64(up)
-				t.DownRate = float64(down)
+			live := map[string][2]int64{}
+			for _, c := range s.connections {
+				c.mu.Lock()
+				total := live[c.record.TunnelID]
+				total[0] += c.record.Up
+				total[1] += c.record.Down
+				live[c.record.TunnelID] = total
+				c.mu.Unlock()
 			}
+			elapsed := now.Sub(s.rateSampleAt).Seconds()
+			for id, t := range s.tunnels {
+				total := live[id]
+				total[0] += t.Up
+				total[1] += t.Down
+				previous := s.rateSamples[id]
+				t.UpRate = float64(max(0, total[0]-previous[0])) / elapsed
+				t.DownRate = float64(max(0, total[1]-previous[1])) / elapsed
+				s.rateSamples[id] = total
+			}
+			s.rateSampleAt = now
 			for key, v := range s.sessions {
 				if now.After(v.Expires) {
 					delete(s.sessions, key)

@@ -24,6 +24,7 @@ func main() {
 	}
 }
 func run() error {
+	buildinfo.ConfigureHelp("tunnelquay-client")
 	address := flag.String("address", "", "服务端直连 IP 或域名")
 	port := flag.Int("port", 0, "服务端接入端口")
 	credential := flag.String("credential", "", "包含认证秘密和服务端指纹的接入凭据")

@@ -225,7 +225,7 @@ func TestTransportsTCPUDPAndHistory(t *testing.T) {
 				}
 				defer conn.Close()
 				conn.SetDeadline(time.Now().Add(3 * time.Second))
-				data := bytes.Repeat([]byte{byte(i + 1)}, 32000)
+				data := bytes.Repeat([]byte{byte(i + 1)}, 65507)
 				if _, e = conn.Write(data); e != nil {
 					t.Fatal(e)
 				}
@@ -280,6 +280,12 @@ func TestConfigSwitchRollbackDisable(t *testing.T) {
 	if _, err = io.ReadFull(newConn, one); err != nil || string(one) != "B" {
 		t.Fatal("新目标失败", err)
 	}
+	update.Protocol = "both"
+	combined, err := s.SaveTunnel(update)
+	if err != nil || combined.Error != "" || combined.Applied.Protocol != "both" {
+		t.Fatal("同端口切换组合协议失败", err, combined.Error)
+	}
+	update.Protocol = "tcp"
 	old.Write([]byte("x"))
 	if _, err = io.ReadFull(old, one); err != nil || string(one) != "x" {
 		t.Fatal("旧连接未保留", err)
