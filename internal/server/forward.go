@@ -95,10 +95,10 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 		t.Connections--
 		t.Up += rec.Up
 		t.Down += rec.Down
-		if result == "failed" {
+		if result == "failed" && t.Applied != nil && t.Applied.Revision == rec.Revision {
 			t.TargetStatus = "failed"
 			t.Error = reason
-		} else if rec.Up+rec.Down > 0 {
+		} else if rec.Up+rec.Down > 0 && t.Applied != nil && t.Applied.Revision == rec.Revision {
 			t.TargetStatus = "reachable"
 		}
 	}
@@ -182,7 +182,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 		return
 	}
 	s.mu.Lock()
-	if t := s.tunnels[c.record.TunnelID]; t != nil {
+	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
 		t.TargetStatus = "reachable"
 	}
 	s.mu.Unlock()
@@ -332,7 +332,7 @@ func (s *Server) deliverUDP(c *activeConnection, b []byte) {
 	c.last = time.Now()
 	c.mu.Unlock()
 	s.mu.Lock()
-	if t := s.tunnels[c.record.TunnelID]; t != nil {
+	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
 		t.TargetStatus = "reachable"
 	}
 	s.mu.Unlock()

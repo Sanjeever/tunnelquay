@@ -14,4 +14,72 @@ main { padding: 32px; min-width: 0; }
 header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 h1 { font-size: 23px; font-weight: 550; letter-spacing: -.5px; margin: 0; }
 .empty { padding: 64px 20px; text-align: center; color: var(--muted); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
-@media(max-width: 700px) { .shell { grid-template-columns: 1fr; } aside { padding: 16px; border-right: 0; border-bottom: 1px solid var(--border); } aside strong { padding: 0 0 16px; } nav { display: flex; } main { padding: 20px 16px; } }
+aside { display: flex; flex-direction: column; position: sticky; top: 0; height: 100vh; }
+nav a { display: flex; gap: 10px; align-items: center; }
+.sidebar-bottom { margin-top: auto; }
+.button { display: inline-flex; gap: 7px; align-items: center; justify-content: center; min-height: 34px; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--radius); font-size: 13px; font-weight: 500; cursor: pointer; text-decoration: none; white-space: nowrap; transition: background .1s; }
+.button-primary { background: #171717; color: white; border-color: #171717; }
+.button-primary:hover { background: #363636; }
+.button-outline { background: white; color: #171717; border-color: var(--border); }
+.button-outline:hover,.button-ghost:hover { background: #f3f3f3; }
+.button-ghost { color: var(--muted); background: transparent; }
+.button-danger { color: #b42318; background: #fff0ed; }
+.button-sm { min-height: 28px; padding: 4px 7px; }
+button:disabled { opacity: .45; cursor: default; }
+:focus-visible { outline: 2px solid #737373; outline-offset: 3px; }
+.count { color: var(--muted); font-size: 13px; font-weight: 400; margin-left: 7px; vertical-align: middle; }
+.table-wrap { position: relative; overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); background: white; }
+table { width: 100%; border-collapse: collapse; text-align: left; white-space: nowrap; font-size: 13px; }
+th { padding: 11px 16px; background: #fcfcfc; font-size: 12px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--border); }
+td { padding: 14px 16px; border-bottom: 1px solid #f0f0f0; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: #fdfdfd; }
+.actions { display: flex; gap: 3px; }
+.text-button { padding: 0; background: transparent; border: 0; cursor: pointer; font-weight: 550; color: #171717; }
+.text-button:hover { text-decoration: underline; }
+.mono { font-family: "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; }
+.small { font-size: 12px; }
+.muted { color: var(--muted); }
+.medium { font-weight: 550; }
+.state { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.state::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #a3a3a3; }
+.state-running::before,.state-online::before,.state-reachable::before { background: #29804b; }
+.state-failed::before,.state-interrupted::before { background: #c4493c; }
+.good { color: #217a45; } .warn { color: #9a6700; } .bad { color: #b42318; }
+.error { color: #b42318; font-size: 13px; overflow-wrap: anywhere; margin: 12px 0; }
+.compact { margin: 4px 0 0; }
+input:not([type="checkbox"]),select,textarea { width: 100%; min-height: 36px; border: 1px solid #dcdcdc; padding: 8px 10px; border-radius: var(--radius); background: white; color: #171717; font-size: 13px; }
+input[type="checkbox"] { width: 15px; height: 15px; accent-color: #171717; cursor: pointer; }
+label { display: flex; flex-direction: column; gap: 7px; font-size: 13px; color: #4d4d4d; }
+form { display: grid; gap: 18px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 16px; }
+.check-label { flex-direction: row; align-items: center; padding-top: 26px; }
+.modal { margin: auto; border: 1px solid var(--border); border-radius: 8px; padding: 24px; width: min(560px,calc(100% - 32px)); max-height: calc(100vh - 48px); overflow: auto; color: #171717; }
+.modal::backdrop { background: #0005; }
+h2 { font-size: 16px; font-weight: 550; margin: 0; }
+.modal header { margin-bottom: 24px; }
+footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; }
+.details { display: grid; grid-template-columns: 90px 1fr; gap: 16px; font-size: 13px; }
+dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+.detail-row { display: contents; }
+.tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--border); margin-bottom: 18px; }
+.tabs button { border: none; background: transparent; padding: 10px 0 12px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; }
+.tabs button[aria-selected="true"] { color: #171717; border-bottom-color: #171717; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; align-items: center; }
+.filters label { max-width: 170px; }
+.filters input,.filters select { height: 34px; min-height: 34px; }
+.sr-label { font-size: 0; gap: 0; }
+.pagination { display: flex; gap: 12px; align-items: center; justify-content: flex-end; padding-top: 18px; font-size: 12px; }
+.pagination>span:first-child { margin-right: auto; }
+.settings-sections { max-width: 590px; display: grid; gap: 36px; }
+.settings-sections section { border-bottom: 1px solid var(--border); padding-bottom: 32px; }
+.settings-sections h2 { margin-bottom: 20px; }
+.settings-sections .button { justify-self: start; }
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.auth { width: 340px; }
+.wordmark { font-size: 19px; font-weight: 600; margin-bottom: 40px; letter-spacing: -.5px; }
+.auth h1 { font-size: 21px; margin-bottom: 28px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+@media(min-width: 1600px) { main { padding: 40px 48px; } }
+@media(max-width: 1000px) { .shell { grid-template-columns: 170px minmax(0,1fr); } main { padding: 24px; } }
+@media(max-width: 700px) { .shell { grid-template-columns: minmax(0,1fr); grid-template-rows: auto 1fr; } aside { position: static; height: auto; padding: 16px; border-right: 0; border-bottom: 1px solid var(--border); } aside strong { padding: 0 0 16px; } nav { display: flex; } nav a { padding: 8px 12px; gap: 6px; } main { padding: 24px 16px; } .sidebar-bottom { position: absolute; top: 10px; right: 10px; } .form-grid { gap: 14px 12px; } .filters label { max-width: 46%; flex: 1 1 140px; } .modal { padding: 20px; } }

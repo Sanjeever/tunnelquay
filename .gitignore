@@ -10,4 +10,5 @@
 *.exe
 /test-results/
 /web/playwright-report/
+/web/test-results/
 *.tsbuildinfo

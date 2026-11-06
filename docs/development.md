@@ -23,3 +23,5 @@ Web 反向代理转发 HTTP 到 7000，保留 Host，并在 HTTPS 入口设置 `
 ## 行为验证
 
 `go test ./...` 使用临时数据库与本地 TCP/UDP 服务，覆盖两种接入、TCP 双向传输与半关闭、三个 UDP 来源及 32 KB 数据报、配置切换与失败保留、停用、认证拒绝、改密和历史清理。`go vet ./...` 检查通过。当前运行验证平台为 Windows amd64；其他系统和架构尚未完成原生运行验证。
+
+浏览器检查先构建两个程序到 `bin/`（Windows 使用 `.exe`），执行 `pnpm --dir web exec playwright install chromium`，再执行 `pnpm --dir web exec playwright test`。测试自行启动临时服务端、QUIC 客户端和 TCP 目标，检查管理操作与真实转发。截图与失败跟踪位于 `web/test-results`，不提交。测试结束删除隔离数据。

@@ -223,7 +223,9 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	updated.Applied = &cfg
 	updated.Error = ""
 	updated.Status = "running"
-	updated.TargetStatus = "unknown"
+	if t.Applied == nil || t.Applied.Host != cfg.Host || t.Applied.TargetPort != cfg.TargetPort || t.Applied.Protocol != cfg.Protocol {
+		updated.TargetStatus = "unknown"
+	}
 	if err = s.Store.Put("tunnels", cfg.ID, updated); err != nil {
 		if prepared != nil {
 			prepared.close()
