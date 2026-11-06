@@ -1,0 +1,49 @@
+name: 标签发布
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: 校验提交归属
+        run: |
+          git fetch origin main
+          git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: node scripts/version.mjs check "$GITHUB_REF_NAME"
+      - name: 构建前检查同版本尚未公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/publish.mjs --preflight
+      - run: pnpm --dir web build
+      - run: go vet ./...
+      - run: go test ./... -timeout=5m
+      - name: 从源码构建全部归档并签名
+        env:
+          TUNNELQUAY_SIGNING_KEY: ${{ secrets.TUNNELQUAY_SIGNING_KEY }}
+          TUNNELQUAY_PUBLIC_KEY: ${{ vars.TUNNELQUAY_PUBLIC_KEY }}
+        run: go run ./scripts/release -output bin/releases
+      - name: 校验附件并完整上传草稿后公开
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TUNNELQUAY_PUBLIC_KEY: ${{ vars.TUNNELQUAY_PUBLIC_KEY }}
+        run: node scripts/publish.mjs --publish bin/releases

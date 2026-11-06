@@ -1,0 +1,71 @@
+name: 持续集成
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    name: 原生验证 ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: node scripts/version.mjs check
+      - run: pnpm --dir web build
+      - run: go vet ./...
+      - run: go test ./... -timeout=5m
+      - name: Linux 竞争检测
+        if: runner.os == 'Linux'
+        run: go test -race ./internal/... -short -timeout=3m
+      - name: 构建浏览器验收程序
+        shell: bash
+        run: |
+          suffix=''
+          if [ "$RUNNER_OS" = 'Windows' ]; then suffix='.exe'; fi
+          go build -o "bin/tunnelquay-server$suffix" ./cmd/tunnelquay-server
+          go build -o "bin/tunnelquay-client$suffix" ./cmd/tunnelquay-client
+      - run: pnpm --dir web exec playwright install --with-deps chromium
+      - run: pnpm --dir web exec playwright test
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-${{ matrix.os }}
+          path: web/test-results
+  cross-build:
+    name: 六个平台架构交叉构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.16.1
+      - run: pnpm --dir web install --frozen-lockfile
+      - run: pnpm --dir web build
+      - run: go run ./scripts/release -test-key -output bin/ci-release
+      - run: node scripts/publish.mjs --check-test bin/ci-release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: test-only-cross-builds
+          path: bin/ci-release
