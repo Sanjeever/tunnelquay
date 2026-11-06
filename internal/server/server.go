@@ -36,6 +36,8 @@ type Server struct {
 	Identity          *transport.Identity
 	mu                sync.RWMutex
 	opMu              sync.Mutex
+	packageMu         sync.Mutex
+	upgradeMu         sync.Mutex
 	peers             map[string]*peer
 	devices           map[string]store.Device
 	tunnels           map[string]*store.Tunnel
@@ -289,6 +291,8 @@ func (s *Server) servePeer(session *transport.Session) {
 	stream.SetDeadline(time.Time{})
 	s.wg.Go(func() { s.reconcileDevice(d.ID) })
 	s.wg.Go(func() { s.heartbeat(p) })
+	s.wg.Go(func() { s.acceptClientStreams(p) })
+	s.wg.Go(func() { s.confirmUpgrade(d.ID, h.Version, h.UpgradeTask) })
 	if session.QUIC != nil {
 		s.wg.Go(func() { s.receiveUDP(p) })
 	}
@@ -303,6 +307,9 @@ func (s *Server) servePeer(session *transport.Session) {
 			case ch.(chan protocol.Message) <- msg:
 			default:
 			}
+		}
+		if msg.Type == "upgrade_status" {
+			s.upgradeStatus(d.ID, msg)
 		}
 	}
 }

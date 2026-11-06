@@ -35,6 +35,13 @@ func TestHistoryRetentionFilteringAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	if err = s.Put("devices", "restored", Device{ID: "restored", Name: "重启设备"}); err != nil {
+		t.Fatal(err)
+	}
+	var devices []Device
+	if err = s.All("devices", &devices); err != nil || len(devices) != 1 {
+		t.Fatal("持久化对象读取失败", devices, err)
+	}
 	got, total, err = s.History(Filter{Page: 1, Limit: 10})
 	if err != nil || total != 2 {
 		t.Fatal(total, err)

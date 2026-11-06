@@ -20,13 +20,12 @@ const MaxDatagram = 65507
 const fragmentSize = 1000
 
 type Session struct {
-	TCP       *yamux.Session
-	QUIC      *quic.Conn
-	Network   string
-	sendMu    sync.Mutex
-	packetID  atomic.Uint64
-	partial   map[uint64]*assembly
-	partialMu sync.Mutex
+	TCP      *yamux.Session
+	QUIC     *quic.Conn
+	Network  string
+	sendMu   sync.Mutex
+	packetID atomic.Uint64
+	partial  map[uint64]*assembly
 }
 type assembly struct {
 	born  time.Time
@@ -42,7 +41,7 @@ func NewTCP(c net.Conn, server bool) (*Session, error) {
 	cfg.KeepAliveInterval = 10 * time.Second
 	cfg.ConnectionWriteTimeout = 10 * time.Second
 	cfg.StreamOpenTimeout = 10 * time.Second
-	cfg.StreamCloseTimeout = 30 * time.Second
+	cfg.StreamCloseTimeout = 0
 	var s *yamux.Session
 	var err error
 	if server {

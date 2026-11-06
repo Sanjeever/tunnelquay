@@ -25,3 +25,11 @@ Web 反向代理转发 HTTP 到 7000，保留 Host，并在 HTTPS 入口设置 `
 `go test ./...` 使用临时数据库与本地 TCP/UDP 服务，覆盖两种接入、TCP 双向传输与半关闭、三个 UDP 来源及 32 KB 数据报、配置切换与失败保留、停用、认证拒绝、改密和历史清理。`go vet ./...` 检查通过。当前运行验证平台为 Windows amd64；其他系统和架构尚未完成原生运行验证。
 
 浏览器检查先构建两个程序到 `bin/`（Windows 使用 `.exe`），执行 `pnpm --dir web exec playwright install chromium`，再执行 `pnpm --dir web exec playwright test`。测试自行启动临时服务端、QUIC 客户端和 TCP 目标，检查管理操作与真实转发。截图与失败跟踪位于 `web/test-results`，不提交。测试结束删除隔离数据。
+
+## 客户端升级
+
+在设备页打开“客户端升级”，选择设备。展开“发行包”可查询官方版本并下载，或导入对应的 `release-manifest.json`、`release-manifest.sig` 与客户端归档。缓存通过签名验证后才成为升级候选。选择版本后发起任务。
+
+升级成功后客户端退出码为 0。Linux 外部守护应采用 `Restart=always`，避免 `Restart=on-failure` 跳过正常退出后的重启。前台运行需手动再次执行原接入命令。Windows 可使用用户已有守护工具，macOS 可使用用户配置的 launchd；项目不安装系统服务。新版启动失败需人工替换程序，保留身份目录。
+
+正式发行公钥通过构建变量 `github.com/Sanjeever/tunnelquay/internal/update.PublicKey` 注入，值为 Base64 编码的 32 字节 Ed25519 公钥。当前未配置正式签名材料，普通开发构建会拒绝远程升级验证。`go test ./...` 使用隔离临时密钥构建两个测试版本，完成实际替换与重启验证，不修改正式信任配置。Windows 运行中的旧文件可能保留为隐藏的 `.tunnelquay-client.exe.old`，确认新版可用且旧进程退出后可人工清理。

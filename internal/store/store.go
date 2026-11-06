@@ -175,7 +175,7 @@ func (s *Store) All(table string, v any) error {
 	defer rows.Close()
 	items := []json.RawMessage{}
 	for rows.Next() {
-		var b json.RawMessage
+		var b []byte
 		if err = rows.Scan(&b); err != nil {
 			return err
 		}

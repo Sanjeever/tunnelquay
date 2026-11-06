@@ -57,6 +57,11 @@ func New(opts Options) (*Client, error) {
 		return nil, errors.New("本地设备身份文件无效")
 	}
 	c := &Client{Options: opts, ID: string(b), secret: secret, fingerprint: fp, configs: map[string]protocol.Config{}, udp: map[uint64]*udpTarget{}, forwards: map[protocol.Stream]forwardTarget{}, installed: make(chan struct{})}
+	state, err := c.readUpgrade()
+	if err != nil {
+		return nil, fmt.Errorf("读取升级状态失败：%w", err)
+	}
+	c.upgradeTask = state.ID
 	return c, nil
 }
 func (c *Client) Run(ctx context.Context) error {
@@ -102,7 +107,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	h := protocol.Hello{Secret: c.secret, ID: c.ID, Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: buildinfo.Version, Protocols: []int{protocol.Version}, Capabilities: protocol.Capabilities}
+	h := protocol.Hello{Secret: c.secret, ID: c.ID, Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: buildinfo.Version, Protocols: []int{protocol.Version}, Capabilities: protocol.Capabilities, UpgradeTask: c.upgradeTask}
 	if err = codec.Send(protocol.Message{Type: "hello", Hello: &h}); err != nil {
 		return err
 	}
@@ -152,6 +157,10 @@ func (c *Client) Connect(ctx context.Context) error {
 		switch m.Type {
 		case "ping":
 			reply.Type = "pong"
+		case "upgrade":
+			message := m
+			c.wg.Go(func() { c.upgrade(sessionCtx, session, codec, message) })
+			continue
 		case "prepare":
 			if m.Config == nil {
 				reply.Error = "缺少隧道配置"

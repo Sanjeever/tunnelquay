@@ -94,6 +94,12 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("GET /api/connections", s.listConnections)
 	protected.HandleFunc("GET /api/settings", s.getSettings)
 	protected.HandleFunc("PUT /api/settings", s.saveSettings)
+	protected.HandleFunc("GET /api/releases", s.listReleases)
+	protected.HandleFunc("GET /api/releases/official", s.officialReleases)
+	protected.HandleFunc("POST /api/releases/import", s.importRelease)
+	protected.HandleFunc("POST /api/releases/download", s.downloadRelease)
+	protected.HandleFunc("GET /api/devices/{id}/upgrades", s.upgrades)
+	protected.HandleFunc("POST /api/devices/{id}/upgrades", s.createUpgrade)
 	mux.Handle("/api/", s.requireAuth(protected))
 }
 func checkOrigin(r *http.Request) bool {

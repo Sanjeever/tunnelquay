@@ -1,29 +1,373 @@
-import { useState, type FormEvent } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { Plus, Pencil, ArrowUpRight, Trash2 } from 'lucide-react'
-import { api, bytes, protocolName, useLoad, type Config, type Device, type Tunnel } from '../lib/api'
-import { Button } from '../components/ui/button'
-import { Empty, ErrorMessage, Modal, State } from '../components/common'
+import { useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Plus, Pencil, ArrowUpRight, Trash2 } from "lucide-react";
+import {
+  api,
+  bytes,
+  protocolName,
+  useLoad,
+  type Config,
+  type Device,
+  type Tunnel,
+} from "../lib/api";
+import { Button } from "../components/ui/button";
+import { Empty, ErrorMessage, Modal, State } from "../components/common";
 
 export function Tunnels() {
-  const tunnels = useLoad<Tunnel[]>('/tunnels', [])
-  const devices = useLoad<Device[]>('/devices', [])
-  const [params] = useSearchParams()
-  const [edit, setEdit] = useState<Partial<Config> | null>(null)
-  const [detail, setDetail] = useState<Tunnel | null>(null)
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [changing, setChanging] = useState<string | null>(null)
-  const names = new Map(devices.data.map(d => [d.id, d.name]))
-  const items = tunnels.data.filter(t => !params.get('device_id') || t.desired.device_id === params.get('device_id')).sort((a, b) => a.desired.public_port - b.desired.public_port)
+  const tunnels = useLoad<Tunnel[]>("/tunnels", []);
+  const devices = useLoad<Device[]>("/devices", []);
+  const [params] = useSearchParams();
+  const [edit, setEdit] = useState<Partial<Config> | null>(null);
+  const [detail, setDetail] = useState<Tunnel | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [changing, setChanging] = useState<string | null>(null);
+  const names = new Map(devices.data.map((d) => [d.id, d.name]));
+  const items = tunnels.data
+    .filter(
+      (t) =>
+        !params.get("device_id") ||
+        t.desired.device_id === params.get("device_id"),
+    )
+    .sort((a, b) => a.desired.public_port - b.desired.public_port);
   async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); const data = new FormData(e.currentTarget); const cfg = { ...edit, name: data.get('name'), device_id: data.get('device_id'), protocol: data.get('protocol'), host: data.get('host'), target_port: Number(data.get('target_port')), public_port: Number(data.get('public_port')), enabled: data.get('enabled') === 'on' }; setBusy(true); setError('')
-    try { await api(edit?.id ? `/tunnels/${edit.id}` : '/tunnels', edit?.id ? 'PUT' : 'POST', cfg); setEdit(null); tunnels.refresh() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+    e.preventDefault();
+    const data = new FormData(e.currentTarget);
+    const cfg = {
+      ...edit,
+      name: data.get("name"),
+      device_id: data.get("device_id"),
+      protocol: data.get("protocol"),
+      host: data.get("host"),
+      target_port: Number(data.get("target_port")),
+      public_port: Number(data.get("public_port")),
+      enabled: data.get("enabled") === "on",
+    };
+    setBusy(true);
+    setError("");
+    try {
+      await api(
+        edit?.id ? `/tunnels/${edit.id}` : "/tunnels",
+        edit?.id ? "PUT" : "POST",
+        cfg,
+      );
+      setEdit(null);
+      tunnels.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
   }
-  async function toggle(t: Tunnel) { setError(''); setChanging(t.desired.id); tunnels.setData(items => items.map(item => item.desired.id === t.desired.id ? { ...item, desired: { ...item.desired, enabled: !t.desired.enabled } } : item)); try { const result = await api<Tunnel>(`/tunnels/${t.desired.id}`, 'PUT', { ...t.desired, enabled: !t.desired.enabled }); tunnels.setData(items => items.map(item => item.desired.id === result.desired.id ? result : item)) } catch (e) { tunnels.setData(items => items.map(item => item.desired.id === t.desired.id ? t : item)); setError((e as Error).message) } finally { setChanging(null) } }
-  async function remove(t: Tunnel) { if (!window.confirm(`删除隧道“${t.desired.name}”？关联连接将立即断开。`)) return; setError(''); try { await api(`/tunnels/${t.desired.id}`, 'DELETE'); tunnels.refresh() } catch (e) { setError((e as Error).message) } }
-  return <><header><h1>隧道 <span className="count">{items.length}</span></h1><Button onClick={() => { setError(''); setEdit({ host: '127.0.0.1', protocol: 'tcp', enabled: true }) }} disabled={!devices.data.length}><Plus size={15}/>新建隧道</Button></header><ErrorMessage message={!edit ? error || tunnels.error || devices.error : tunnels.error}/>{items.length ? <div className="table-wrap"><table><thead><tr><th>名称 / 设备</th><th>协议</th><th>公网端口</th><th>目标</th><th>运行状态</th><th>连接</th><th>速率 ↑ / ↓</th><th>启用</th><th><span className="sr-only">操作</span></th></tr></thead><tbody>{items.map(t => <tr key={t.desired.id}><td><button className="text-button" onClick={() => setDetail(t)}>{t.desired.name}</button><div className="muted small">{names.get(t.desired.device_id)}</div></td><td className="mono">{protocolName(t.desired.protocol)}</td><td className="mono">{t.desired.public_port}</td><td className="mono">{t.desired.host}:{t.desired.target_port}</td><td><State value={t.status}/>{t.error && <div className="error small compact" title={t.error}>配置或转发错误</div>}{t.applied && t.applied.revision !== t.desired.revision && <div className="muted small">待应用 v{t.desired.revision}</div>}</td><td className="mono">{t.connections}</td><td className="mono small">{bytes(t.up_rate)}/s / {bytes(t.down_rate)}/s</td><td><input type="checkbox" role="switch" aria-label={`启用 ${t.desired.name}`} checked={t.desired.enabled} onChange={() => void toggle(t)}/></td><td><div className="actions"><Button variant="ghost" size="sm" aria-label={`编辑 ${t.desired.name}`} onClick={() => { setError(''); setEdit(t.desired) }}><Pencil size={14}/></Button><Button variant="ghost" size="sm" aria-label={`删除 ${t.desired.name}`} onClick={() => void remove(t)}><Trash2 size={14}/></Button></div></td></tr>)}</tbody></table></div> : <Empty loading={tunnels.loading}>{devices.data.length ? '暂无隧道' : <Link to="/devices">接入设备</Link>}</Empty>}
-    {edit && <Modal title={edit.id ? '编辑隧道' : '新建隧道'} close={() => { if (!busy) setEdit(null) }}><form onSubmit={submit}><label>名称<input name="name" defaultValue={edit.name} required maxLength={128} autoFocus/></label><div className="form-grid"><label>设备<select name="device_id" defaultValue={edit.device_id} disabled={!!edit.id}>{devices.data.map(d => <option key={d.id} value={d.id}>{d.name}{d.online ? '' : ' · 离线'}</option>)}</select>{edit.id && <input type="hidden" name="device_id" value={edit.device_id}/>}</label><label>协议<select name="protocol" defaultValue={edit.protocol}><option value="tcp">TCP</option><option value="udp">UDP</option><option value="both">TCP + UDP</option></select></label><label>目标地址<input name="host" defaultValue={edit.host} required/></label><label>目标端口<input name="target_port" type="number" min={1} max={65535} defaultValue={edit.target_port} required/></label><label>公网端口<input name="public_port" type="number" min={0} max={65535} defaultValue={edit.public_port || ''} placeholder="自动分配"/></label><label className="check-label"><input name="enabled" type="checkbox" defaultChecked={edit.enabled}/>启用</label></div><ErrorMessage message={error}/><footer><Button type="button" variant="outline" onClick={() => setEdit(null)} disabled={busy}>取消</Button><Button type="submit" disabled={busy}>{busy ? '正在应用…' : '保存'}</Button></footer></form></Modal>}
-    {detail && <Modal title={detail.desired.name} close={() => setDetail(null)}><dl className="details"><dt>监听</dt><dd><State value={detail.status}/></dd><dt>目标状态</dt><dd><State value={detail.target_status}/></dd><dt>期望配置</dt><dd className="mono">v{detail.desired.revision} · {protocolName(detail.desired.protocol)} :{detail.desired.public_port} → {detail.desired.host}:{detail.desired.target_port}</dd><dt>生效配置</dt><dd className="mono">{detail.applied ? `v${detail.applied.revision} · ${protocolName(detail.applied.protocol)} :${detail.applied.public_port} → ${detail.applied.host}:${detail.applied.target_port}` : '—'}</dd><dt>累计流量 ↑ / ↓</dt><dd>{bytes(detail.up)} / {bytes(detail.down)}</dd></dl><ErrorMessage message={detail.error}/><footer><Button asChild variant="outline"><Link to={`/connections?tunnel_id=${detail.desired.id}`} onClick={() => setDetail(null)}>查看连接<ArrowUpRight size={14}/></Link></Button></footer></Modal>}
-  </>
+  async function toggle(t: Tunnel) {
+    setError("");
+    setChanging(t.desired.id);
+    tunnels.setData((items) =>
+      items.map((item) =>
+        item.desired.id === t.desired.id
+          ? {
+              ...item,
+              desired: { ...item.desired, enabled: !t.desired.enabled },
+            }
+          : item,
+      ),
+    );
+    try {
+      const result = await api<Tunnel>(`/tunnels/${t.desired.id}`, "PUT", {
+        ...t.desired,
+        enabled: !t.desired.enabled,
+      });
+      tunnels.setData((items) =>
+        items.map((item) =>
+          item.desired.id === result.desired.id ? result : item,
+        ),
+      );
+    } catch (e) {
+      tunnels.setData((items) =>
+        items.map((item) => (item.desired.id === t.desired.id ? t : item)),
+      );
+      setError((e as Error).message);
+    } finally {
+      setChanging(null);
+    }
+  }
+  async function remove(t: Tunnel) {
+    if (!window.confirm(`删除隧道“${t.desired.name}”？关联连接将立即断开。`))
+      return;
+    setError("");
+    try {
+      await api(`/tunnels/${t.desired.id}`, "DELETE");
+      tunnels.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+  return (
+    <>
+      <header>
+        <h1>
+          隧道 <span className="count">{items.length}</span>
+        </h1>
+        <Button
+          onClick={() => {
+            setError("");
+            setEdit({ host: "127.0.0.1", protocol: "tcp", enabled: true });
+          }}
+          disabled={!devices.data.length}
+        >
+          <Plus size={15} />
+          新建隧道
+        </Button>
+      </header>
+      <ErrorMessage
+        message={
+          !edit ? error || tunnels.error || devices.error : tunnels.error
+        }
+      />
+      {items.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>名称 / 设备</th>
+                <th>协议</th>
+                <th>公网端口</th>
+                <th>目标</th>
+                <th>运行状态</th>
+                <th>连接</th>
+                <th>速率 ↑ / ↓</th>
+                <th>启用</th>
+                <th>
+                  <span className="sr-only">操作</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((t) => (
+                <tr key={t.desired.id}>
+                  <td>
+                    <button
+                      className="text-button"
+                      onClick={() => setDetail(t)}
+                    >
+                      {t.desired.name}
+                    </button>
+                    <div className="muted small">
+                      {names.get(t.desired.device_id)}
+                    </div>
+                  </td>
+                  <td className="mono">{protocolName(t.desired.protocol)}</td>
+                  <td className="mono">{t.desired.public_port}</td>
+                  <td className="mono">
+                    {t.desired.host}:{t.desired.target_port}
+                  </td>
+                  <td>
+                    <State value={t.status} />
+                    {t.error && (
+                      <div className="error small compact" title={t.error}>
+                        配置或转发错误
+                      </div>
+                    )}
+                    {t.applied && t.applied.revision !== t.desired.revision && (
+                      <div className="muted small">
+                        待应用 v{t.desired.revision}
+                      </div>
+                    )}
+                  </td>
+                  <td className="mono">{t.connections}</td>
+                  <td className="mono small">
+                    {bytes(t.up_rate)}/s / {bytes(t.down_rate)}/s
+                  </td>
+                  <td>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label={`启用 ${t.desired.name}`}
+                      checked={t.desired.enabled}
+                      onChange={() => void toggle(t)}
+                    />
+                  </td>
+                  <td>
+                    <div className="actions">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`编辑 ${t.desired.name}`}
+                        onClick={() => {
+                          setError("");
+                          setEdit(t.desired);
+                        }}
+                      >
+                        <Pencil size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`删除 ${t.desired.name}`}
+                        onClick={() => void remove(t)}
+                      >
+                        <Trash2 size={14} />
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty loading={tunnels.loading}>
+          {devices.data.length ? (
+            "暂无隧道"
+          ) : (
+            <Link to="/devices">接入设备</Link>
+          )}
+        </Empty>
+      )}
+      {edit && (
+        <Modal
+          title={edit.id ? "编辑隧道" : "新建隧道"}
+          close={() => {
+            if (!busy) setEdit(null);
+          }}
+        >
+          <form onSubmit={submit}>
+            <label>
+              名称
+              <input
+                name="name"
+                defaultValue={edit.name}
+                required
+                maxLength={128}
+                autoFocus
+              />
+            </label>
+            <div className="form-grid">
+              <label>
+                设备
+                <select
+                  name="device_id"
+                  defaultValue={edit.device_id}
+                  disabled={!!edit.id}
+                >
+                  {devices.data.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                      {d.online ? "" : " · 离线"}
+                    </option>
+                  ))}
+                </select>
+                {edit.id && (
+                  <input
+                    type="hidden"
+                    name="device_id"
+                    value={edit.device_id}
+                  />
+                )}
+              </label>
+              <label>
+                协议
+                <select name="protocol" defaultValue={edit.protocol}>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                  <option value="both">TCP + UDP</option>
+                </select>
+              </label>
+              <label>
+                目标地址
+                <input name="host" defaultValue={edit.host} required />
+              </label>
+              <label>
+                目标端口
+                <input
+                  name="target_port"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  defaultValue={edit.target_port}
+                  required
+                />
+              </label>
+              <label>
+                公网端口
+                <input
+                  name="public_port"
+                  type="number"
+                  min={0}
+                  max={65535}
+                  defaultValue={edit.public_port || ""}
+                  placeholder="自动分配"
+                />
+              </label>
+              <label className="check-label">
+                <input
+                  name="enabled"
+                  type="checkbox"
+                  defaultChecked={edit.enabled}
+                />
+                启用
+              </label>
+            </div>
+            <ErrorMessage message={error} />
+            <footer>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEdit(null)}
+                disabled={busy}
+              >
+                取消
+              </Button>
+              <Button type="submit" disabled={busy}>
+                {busy ? "正在应用…" : "保存"}
+              </Button>
+            </footer>
+          </form>
+        </Modal>
+      )}
+      {detail && (
+        <Modal title={detail.desired.name} close={() => setDetail(null)}>
+          <dl className="details">
+            <dt>监听</dt>
+            <dd>
+              <State value={detail.status} />
+            </dd>
+            <dt>目标状态</dt>
+            <dd>
+              <State value={detail.target_status} />
+            </dd>
+            <dt>期望配置</dt>
+            <dd className="mono">
+              v{detail.desired.revision} ·{" "}
+              {protocolName(detail.desired.protocol)} :
+              {detail.desired.public_port} → {detail.desired.host}:
+              {detail.desired.target_port}
+            </dd>
+            <dt>生效配置</dt>
+            <dd className="mono">
+              {detail.applied
+                ? `v${detail.applied.revision} · ${protocolName(detail.applied.protocol)} :${detail.applied.public_port} → ${detail.applied.host}:${detail.applied.target_port}`
+                : "—"}
+            </dd>
+            <dt>累计流量 ↑ / ↓</dt>
+            <dd>
+              {bytes(detail.up)} / {bytes(detail.down)}
+            </dd>
+          </dl>
+          <ErrorMessage message={detail.error} />
+          <footer>
+            <Button asChild variant="outline">
+              <Link
+                to={`/connections?tunnel_id=${detail.desired.id}`}
+                onClick={() => setDetail(null)}
+              >
+                查看连接
+                <ArrowUpRight size={14} />
+              </Link>
+            </Button>
+          </footer>
+        </Modal>
+      )}
+    </>
+  );
 }
