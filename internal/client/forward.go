@@ -113,8 +113,9 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		copyOne := func(dst io.Writer, src io.Reader) {
 			defer wg.Done()
 			_, e := io.CopyBuffer(dst, src, make([]byte, 32<<10))
-			transport.HalfClose(dst)
-			if e != nil {
+			if e == nil {
+				transport.HalfClose(dst)
+			} else {
 				target.Close()
 				transport.Abort(stream)
 			}

@@ -42,9 +42,9 @@ func NewTCP(c net.Conn, server bool) (*Session, error) {
 	logger.SetPrefix("TCP 复用传输：")
 	cfg.Logger = logger
 	cfg.EnableKeepAlive = true
-	cfg.KeepAliveInterval = 10 * time.Second
-	cfg.ConnectionWriteTimeout = 10 * time.Second
-	cfg.StreamOpenTimeout = 10 * time.Second
+	cfg.KeepAliveInterval = protocol.HeartbeatInterval
+	cfg.ConnectionWriteTimeout = protocol.HeartbeatTimeout
+	cfg.StreamOpenTimeout = protocol.ControlRequestTimeout
 	cfg.StreamCloseTimeout = 0
 	var s *yamux.Session
 	var err error
@@ -62,7 +62,7 @@ func NewQUIC(c *quic.Conn) *Session {
 	return &Session{QUIC: c, Network: "quic", partial: map[uint64]*assembly{}}
 }
 func QUICConfig() *quic.Config {
-	return &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 1024, MaxIdleTimeout: 45 * time.Second, KeepAlivePeriod: 10 * time.Second, InitialStreamReceiveWindow: 64 << 10, MaxStreamReceiveWindow: 1 << 20, MaxConnectionReceiveWindow: 16 << 20}
+	return &quic.Config{EnableDatagrams: true, MaxIncomingStreams: 1024, MaxIdleTimeout: protocol.ControlIdleTimeout, KeepAlivePeriod: protocol.HeartbeatInterval, InitialStreamReceiveWindow: 64 << 10, MaxStreamReceiveWindow: 1 << 20, MaxConnectionReceiveWindow: 16 << 20}
 }
 func Dial(ctx context.Context, address, network string, tlsConfig *tls.Config) (*Session, error) {
 	if network == "quic" {
@@ -104,14 +104,14 @@ func (s *Session) Close() error {
 	}
 	return s.TCP.Close()
 }
-func Abort(s protocol.Stream) {
+func Interrupt(s protocol.Stream) {
 	s.SetDeadline(time.Now())
 	if q, ok := s.(*quic.Stream); ok {
 		q.CancelRead(1)
 		q.CancelWrite(1)
 	}
-	s.Close()
 }
+func Abort(s protocol.Stream) { Interrupt(s); s.Close() }
 func HalfClose(w io.Writer) {
 	switch c := w.(type) {
 	case interface{ CloseWrite() error }:

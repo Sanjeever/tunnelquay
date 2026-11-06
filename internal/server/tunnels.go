@@ -208,7 +208,7 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	s.mu.Unlock()
 	if err == nil {
 		var reply protocol.Message
-		reply, err = s.request(p, protocol.Message{Type: "prepare", Config: &cfg, Revision: cfg.Revision})
+		reply, err = s.request(p, protocol.Message{Type: "prepare", Config: &cfg, Revision: cfg.Revision}, protocol.ControlRequestTimeout)
 		if err == nil && (reply.Type != "ack" || reply.Revision != cfg.Revision) {
 			err = errors.New("客户端配置确认版本不匹配")
 		}
@@ -308,7 +308,7 @@ func (s *Server) reconcileDevice(id string) {
 		if fallback {
 			r, err := bind(applied)
 			if err == nil {
-				_, err = s.request(p, protocol.Message{Type: "prepare", Config: &applied})
+				_, err = s.request(p, protocol.Message{Type: "prepare", Config: &applied}, protocol.ControlRequestTimeout)
 			}
 			if err != nil {
 				if r != nil {

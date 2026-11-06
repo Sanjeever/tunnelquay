@@ -22,6 +22,9 @@ func ErrorKind(err error) string {
 	}
 	var application *quic.ApplicationError
 	if errors.As(err, &application) {
+		if application.ErrorCode == 0 {
+			return "connection_closed"
+		}
 		return "application_close"
 	}
 	var stream *quic.StreamError

@@ -41,7 +41,7 @@ func (c *activeConnection) close() {
 			c.local.Close()
 		}
 		if c.stream != nil {
-			transport.Abort(c.stream)
+			transport.Interrupt(c.stream)
 		}
 	})
 }
@@ -188,6 +188,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 		s.finish(c, "failed", "目标连接失败："+err.Error())
 		return
 	}
+	defer stream.Close()
 	s.mu.Lock()
 	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
 		t.TargetStatus = "reachable"
@@ -201,8 +202,9 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	copyOne := func(dst io.Writer, src io.Reader, up bool) {
 		defer wg.Done()
 		_, e := io.CopyBuffer(counterWriter{dst, c, up}, src, make([]byte, 32<<10))
-		transport.HalfClose(dst)
-		if e != nil {
+		if e == nil {
+			transport.HalfClose(dst)
+		} else {
 			errMu.Lock()
 			if firstErr == nil {
 				firstErr = e
@@ -295,6 +297,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 		s.finish(c, "failed", "目标连接失败："+err.Error())
 		return
 	}
+	defer stream.Close()
 	readDone := make(chan struct{})
 	go func() {
 		defer close(readDone)

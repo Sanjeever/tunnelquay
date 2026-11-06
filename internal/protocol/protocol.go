@@ -12,6 +12,10 @@ import (
 
 const Version = 1
 const MaxFrame = 1 << 20
+const HeartbeatInterval = 10 * time.Second
+const HeartbeatTimeout = 60 * time.Second
+const ControlIdleTimeout = 90 * time.Second
+const ControlRequestTimeout = 10 * time.Second
 
 var Capabilities = []string{"config-v1", "tcp", "udp", "upgrade-v1"}
 

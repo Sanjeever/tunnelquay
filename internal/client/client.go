@@ -163,10 +163,17 @@ func (c *Client) Connect(ctx context.Context) error {
 		c.wg.Go(func() { c.receiveUDP(sessionCtx, session) })
 	}
 	for {
-		stream.SetDeadline(time.Now().Add(40 * time.Second))
+		stream.SetDeadline(time.Now().Add(protocol.ControlIdleTimeout))
 		m, err = codec.Receive()
 		if err != nil {
-			slog.Warn("服务端控制连接接收失败", "传输", session.Network, "错误类型", transport.ErrorKind(err), "错误", err, "接入诊断", session.Diagnostics())
+			if ctx.Err() == nil {
+				kind := transport.ErrorKind(err)
+				level := slog.LevelWarn
+				if kind == "eof" || kind == "connection_closed" {
+					level = slog.LevelInfo
+				}
+				slog.Log(ctx, level, "服务端控制连接已结束", "传输", session.Network, "错误类型", kind, "错误", err, "接入诊断", session.Diagnostics())
+			}
 			return fmt.Errorf("控制消息接收失败：%w", err)
 		}
 		reply := protocol.Message{Type: "ack", ID: m.ID, Revision: m.Revision}
@@ -200,7 +207,7 @@ func (c *Client) Connect(ctx context.Context) error {
 				for stream, target := range c.forwards {
 					if target.tunnelID == m.Config.ID && target.revision <= m.Config.Revision {
 						target.cancel()
-						transport.Abort(stream)
+						transport.Interrupt(stream)
 					}
 				}
 				if cfg, ok := c.configs[m.Config.ID]; ok && cfg.Revision <= m.Config.Revision {

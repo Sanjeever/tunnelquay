@@ -340,11 +340,16 @@ func (s *Server) servePeer(session *transport.Session) {
 		s.wg.Go(func() { s.receiveUDP(p) })
 	}
 	for {
-		stream.SetDeadline(time.Now().Add(35 * time.Second))
+		stream.SetDeadline(time.Now().Add(protocol.ControlIdleTimeout))
 		msg, e := codec.Receive()
 		if e != nil {
 			if s.ctx.Err() == nil {
-				slog.Warn("设备控制连接接收失败", "设备", d.ID, "传输", session.Network, "错误类型", transport.ErrorKind(e), "错误", e, "接入诊断", session.Diagnostics())
+				kind := transport.ErrorKind(e)
+				level := slog.LevelWarn
+				if kind == "eof" || kind == "connection_closed" {
+					level = slog.LevelInfo
+				}
+				slog.Log(s.ctx, level, "设备控制连接已结束", "设备", d.ID, "传输", session.Network, "错误类型", kind, "错误", e, "接入诊断", session.Diagnostics())
 			}
 			return
 		}
@@ -359,7 +364,7 @@ func (s *Server) servePeer(session *transport.Session) {
 		}
 	}
 }
-func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) {
+func (s *Server) request(p *peer, m protocol.Message, timeout time.Duration) (protocol.Message, error) {
 	started := time.Now()
 	if m.ID == "" {
 		m.ID = transport.RandomID()
@@ -376,7 +381,7 @@ func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) 
 			return reply, errors.New(reply.Error)
 		}
 		return reply, nil
-	case <-time.After(10 * time.Second):
+	case <-time.After(timeout):
 		return protocol.Message{}, fmt.Errorf("等待客户端 %s 响应超时（请求 %s，耗时 %s）", m.Type, m.ID, time.Since(started))
 	case <-p.done:
 		return protocol.Message{}, errors.New("设备离线")
@@ -385,12 +390,19 @@ func (s *Server) request(p *peer, m protocol.Message) (protocol.Message, error) 
 	}
 }
 func (s *Server) heartbeat(p *peer) {
-	timer := time.NewTicker(10 * time.Second)
+	timer := time.NewTicker(protocol.HeartbeatInterval)
 	defer timer.Stop()
 	for {
 		start := time.Now()
-		_, err := s.request(p, protocol.Message{Type: "ping"})
+		_, err := s.request(p, protocol.Message{Type: "ping"}, protocol.HeartbeatTimeout)
 		if err != nil {
+			select {
+			case <-p.done:
+				return
+			case <-s.ctx.Done():
+				return
+			default:
+			}
 			if s.ctx.Err() == nil {
 				s.mu.RLock()
 				var active int
