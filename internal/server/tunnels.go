@@ -168,8 +168,9 @@ func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
 		if prepared != nil {
 			prepared.close()
 		}
+		result := t
 		s.mu.Unlock()
-		return t, nil
+		return result, nil
 	}
 	p := s.peers[cfg.DeviceID]
 	s.mu.Unlock()
@@ -179,8 +180,9 @@ func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
 		}
 		s.mu.Lock()
 		t.Status = "offline"
+		result := t
 		s.mu.Unlock()
-		return t, nil
+		return result, nil
 	}
 	s.apply(&t, p, prepared)
 	s.mu.RLock()
