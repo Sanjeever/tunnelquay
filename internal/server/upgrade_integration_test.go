@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"mime/multipart"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -20,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Sanjeever/tunnelquay/internal/update"
 	"github.com/Sanjeever/tunnelquay/internal/protocol"
+	"github.com/Sanjeever/tunnelquay/internal/update"
 )
 
 func TestActualClientReplacementExitAndRestart(t *testing.T) {
@@ -70,18 +71,35 @@ func TestActualClientReplacementExitAndRestart(t *testing.T) {
 	artifact := update.Artifact{Name: "tunnelquay-client_0.0.2_" + runtime.GOOS + "_" + runtime.GOARCH + ".zip", Component: "client", OS: runtime.GOOS, Arch: runtime.GOARCH, Size: int64(archive.Len()), SHA256: hex.EncodeToString(archiveHash[:]), Binary: binaryName, BinarySize: int64(len(content)), BinarySHA256: hex.EncodeToString(hash[:])}
 	manifest, _ := json.Marshal(update.Manifest{Version: "0.0.2", ProtocolMin: 1, ProtocolMax: 1, Required: []string{"upgrade-v1"}, Artifacts: []update.Artifact{artifact}})
 	signed := update.Signed{Manifest: manifest, Signature: ed25519.Sign(priv, manifest), Artifact: artifact.Name}
-	packagePath := filepath.Join(dir, "package.zip")
-	if err = os.WriteFile(packagePath, archive.Bytes(), 0600); err != nil {
+	s := testServer(t)
+	var upload bytes.Buffer
+	multipartWriter := multipart.NewWriter(&upload)
+	for _, file := range []struct {
+		field, name string
+		data        []byte
+	}{{"manifest", "release-manifest.json", signed.Manifest}, {"signature", "release-manifest.sig", []byte(base64.StdEncoding.EncodeToString(signed.Signature))}, {"archive", artifact.Name, archive.Bytes()}} {
+		part, e := multipartWriter.CreateFormFile(file.field, file.name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = part.Write(file.data); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if err = multipartWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s := testServer(t)
-	if _, err = s.cachePackage(signed, packagePath); err != nil {
-		t.Fatal(err)
+	importRequest := httptest.NewRequest("POST", "/api/releases/import", &upload)
+	importRequest.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	importResponse := httptest.NewRecorder()
+	s.importRelease(importResponse, importRequest)
+	if importResponse.Code != 200 {
+		t.Fatal("实际签名包导入失败", importResponse.Code, importResponse.Body.String())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, port, _ := strings.Cut(s.Addr(), ":")
-	args := []string{"-address", "127.0.0.1", "-port", port, "-credential", s.Identity.Credential(), "-transport", "tcp", "-data-dir", filepath.Join(dir, "identity")}
+	args := []string{"-address", "127.0.0.1", "-port", port, "-credential", s.Identity.Credential(), "-transport", "quic", "-data-dir", filepath.Join(dir, "identity")}
 	cmd := exec.CommandContext(ctx, oldPath, args...)
 	cmd.Stderr = os.Stderr
 	if err = cmd.Start(); err != nil {
@@ -250,6 +268,36 @@ func TestActualClientReplacementExitAndRestart(t *testing.T) {
 	if d.Version != "0.0.2" || count != 1 {
 		t.Fatal("升级后身份或版本未恢复", d.Version, count)
 	}
-	var allTasks []update.Task;if err=s.Store.All("upgrades",&allTasks);err!=nil{t.Fatal(err)};for _,replay:=range allTasks{if replay.ID!=task.ID{continue};data,e:=json.Marshal(replay);if e!=nil{t.Fatal(e)};s.mu.RLock();p:=s.peers[id];s.mu.RUnlock();if e=p.control.Send(protocol.Message{Type:"upgrade",ID:replay.ID,Task:data});e!=nil{t.Fatal(e)};time.Sleep(150*time.Millisecond);select{case e:=<-done:t.Fatal("重复任务导致额外退出",e);default:};s.mu.RLock();online:=s.devices[id].Online;s.mu.RUnlock();if !online{t.Fatal("重复任务导致新客户端离线")}}
+	var allTasks []update.Task
+	if err = s.Store.All("upgrades", &allTasks); err != nil {
+		t.Fatal(err)
+	}
+	for _, replay := range allTasks {
+		if replay.ID != task.ID {
+			continue
+		}
+		data, e := json.Marshal(replay)
+		if e != nil {
+			t.Fatal(e)
+		}
+		s.mu.RLock()
+		p := s.peers[id]
+		s.mu.RUnlock()
+		if e = p.control.Send(protocol.Message{Type: "upgrade", ID: replay.ID, Task: data}); e != nil {
+			t.Fatal(e)
+		}
+		time.Sleep(150 * time.Millisecond)
+		select {
+		case e := <-done:
+			t.Fatal("重复任务导致额外退出", e)
+		default:
+		}
+		s.mu.RLock()
+		online := s.devices[id].Online
+		s.mu.RUnlock()
+		if !online {
+			t.Fatal("重复任务导致新客户端离线")
+		}
+	}
 	t.Log("隔离客户端完成实际文件替换、退出、人工重新启动和原身份版本确认")
 }
