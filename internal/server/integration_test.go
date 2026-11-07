@@ -397,3 +397,54 @@ func TestLoginPasswordAndOrigin(t *testing.T) {
 		t.Fatal("应拒绝跨站写入")
 	}
 }
+
+func TestProbeAllowCIDRsDeleteDeviceAndRotateCredential(t *testing.T) {
+	s := testServer(t)
+	id, cancel := testClient(t, s)
+	target := tcpTarget(t, "P")
+	cfg := cfgFor(id, "tcp", target.Addr().String())
+	cfg.AllowCIDRs = "198.51.100.0/24"
+	tun, err := s.SaveTunnel(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probed, err := s.ProbeTunnel(tun.ID)
+	if err != nil || probed.TargetStatus != "reachable" {
+		t.Fatalf("目标探测失败：%v %+v", err, probed)
+	}
+	blockedConn := dialTunnel(t, tun.PublicPort)
+	defer blockedConn.Close()
+	one := make([]byte, 1)
+	if _, err = blockedConn.Read(one); err == nil {
+		t.Fatal("非白名单来源 IP 应被拒绝")
+	}
+	tun.AllowCIDRs = "127.0.0.1/32, 10.0.0.0/8"
+	tun, err = s.SaveTunnel(tun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedConn := dialTunnel(t, tun.PublicPort)
+	defer allowedConn.Close()
+	if _, err = io.ReadFull(allowedConn, one); err != nil || string(one) != "P" {
+		t.Fatalf("白名单来源 IP 访问失败：%v %q", err, string(one))
+	}
+	oldCred := s.Identity.Credential()
+	if err = s.Identity.RotateSecret(s.Options.DataDir); err != nil || s.Identity.Credential() == oldCred {
+		t.Fatalf("重置登记凭据失败：%v", err)
+	}
+	if err = s.DeleteDevice(id); err == nil {
+		t.Fatal("在线设备不应允许直接删除")
+	}
+	cancel()
+	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[id].Online })
+	if err = s.DeleteDevice(id); err != nil {
+		t.Fatalf("离线设备删除失败：%v", err)
+	}
+	s.mu.RLock()
+	_, hasDev := s.devices[id]
+	_, hasTun := s.tunnels[tun.ID]
+	s.mu.RUnlock()
+	if hasDev || hasTun {
+		t.Fatal("删除设备后未清理设备或关联隧道")
+	}
+}

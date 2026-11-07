@@ -49,7 +49,7 @@ func (s *Server) newConnection(r *runtimeTunnel, network, source string, local n
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	full := s.historyBacklog.Load() >= 4096
-	if s.closed || r.retired || (r.cfg.Protocol != "both" && r.cfg.Protocol != network) || len(s.connections) >= 1024 || full {
+	if s.closed || r.retired || !r.allowsSource(source) || (r.cfg.Protocol != "both" && r.cfg.Protocol != network) || len(s.connections) >= 1024 || full {
 		return nil
 	}
 	cfg := r.cfg

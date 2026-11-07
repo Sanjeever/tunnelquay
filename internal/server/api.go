@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -82,9 +83,11 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("GET /api/devices", s.listDevices)
 	protected.HandleFunc("PATCH /api/devices/{id}", s.renameDevice)
 	protected.HandleFunc("POST /api/devices/{id}/revoke", s.revokeDevice)
+	protected.HandleFunc("DELETE /api/devices/{id}", s.deleteDevice)
 	protected.HandleFunc("GET /api/tunnels", s.listTunnels)
 	protected.HandleFunc("POST /api/tunnels", s.saveTunnel)
 	protected.HandleFunc("PUT /api/tunnels/{id}", s.saveTunnel)
+	protected.HandleFunc("POST /api/tunnels/{id}/probe", s.probeTunnel)
 	protected.HandleFunc("DELETE /api/tunnels/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.DeleteTunnel(r.PathValue("id")); err != nil {
 			apiError(w, 400, "delete_failed", err)
@@ -95,6 +98,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("GET /api/connections", s.listConnections)
 	protected.HandleFunc("GET /api/settings", s.getSettings)
 	protected.HandleFunc("PUT /api/settings", s.saveSettings)
+	protected.HandleFunc("POST /api/settings/credential", s.rotateCredential)
 	protected.HandleFunc("GET /api/releases", s.listReleases)
 	protected.HandleFunc("GET /api/releases/official", s.officialReleases)
 	protected.HandleFunc("POST /api/releases/import", s.importRelease)
@@ -303,6 +307,14 @@ func (s *Server) saveTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	respond(w, 200, t)
 }
+func (s *Server) probeTunnel(w http.ResponseWriter, r *http.Request) {
+	t, err := s.ProbeTunnel(r.PathValue("id"))
+	if err != nil {
+		apiError(w, 400, "probe_failed", err)
+		return
+	}
+	respond(w, 200, t)
+}
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, _ := strconv.Atoi(q.Get("page"))
@@ -352,7 +364,45 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 500, "storage_failed", err)
 		return
 	}
-	respond(w, 200, map[string]any{"port_min": a, "port_max": b, "public_address": address, "credential": s.Identity.Credential()})
+	suggested := address
+	if suggested == "" && r.Host != "" {
+		host := r.Host
+		if h, _, e := net.SplitHostPort(r.Host); e == nil {
+			host = h
+		}
+		if s.listener != nil {
+			if _, p, e := net.SplitHostPort(s.Addr()); e == nil {
+				suggested = net.JoinHostPort(host, p)
+			}
+		}
+	}
+	clientIP := ""
+	if h, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
+		clientIP = h
+	}
+	s.mu.RLock()
+	cred := s.Identity.Credential()
+	s.mu.RUnlock()
+	respond(w, 200, map[string]any{
+		"port_min":          a,
+		"port_max":          b,
+		"public_address":    address,
+		"suggested_address": suggested,
+		"client_ip":         clientIP,
+		"credential":        cred,
+	})
+}
+func (s *Server) rotateCredential(w http.ResponseWriter, r *http.Request) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	s.mu.Lock()
+	err := s.Identity.RotateSecret(s.Options.DataDir)
+	s.mu.Unlock()
+	if err != nil {
+		apiError(w, 500, "rotate_failed", err)
+		return
+	}
+	s.getSettings(w, r)
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {

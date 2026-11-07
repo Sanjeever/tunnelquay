@@ -13,11 +13,12 @@ import (
 func (s *Server) verifyDeviceIdentity(codec *protocol.Codec, hello protocol.Hello) (string, error) {
 	s.mu.RLock()
 	device, exists := s.devices[hello.ID]
+	secret := s.Identity.Secret
 	s.mu.RUnlock()
 	if device.Revoked {
 		return "identity_revoked", errors.New("设备身份已撤销")
 	}
-	if !exists && subtle.ConstantTimeCompare([]byte(hello.Secret), []byte(s.Identity.Secret)) != 1 {
+	if !exists && subtle.ConstantTimeCompare([]byte(hello.Secret), []byte(secret)) != 1 {
 		return "unauthorized", errors.New("接入凭据错误，无法登记新设备")
 	}
 	publicKey, err := base64.RawStdEncoding.DecodeString(hello.PublicKey)

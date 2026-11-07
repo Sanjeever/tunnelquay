@@ -37,6 +37,7 @@ type Tunnel struct {
 	Host         string  `json:"host"`
 	TargetPort   int     `json:"target_port"`
 	PublicPort   int     `json:"public_port"`
+	AllowCIDRs   string  `json:"allow_cidrs,omitempty"`
 	Enabled      bool    `json:"enabled"`
 	Error        string  `json:"error"`
 	Status       string  `json:"status"`
@@ -200,6 +201,26 @@ func (s *Store) All(table string, v any) error {
 func (s *Store) DeleteTunnel(id string) error {
 	_, err := s.DB.Exec("DELETE FROM tunnels WHERE id=?", id)
 	return err
+}
+
+func (s *Store) DeleteDevice(id string, tunnelIDs []string) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err = tx.Exec("DELETE FROM devices WHERE id=?", id); err != nil {
+		return err
+	}
+	for _, tid := range tunnelIDs {
+		if _, err = tx.Exec("DELETE FROM tunnels WHERE id=?", tid); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("DELETE FROM upgrades WHERE json_extract(payload,'$.device_id')=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) PutDeviceAndTunnels(device Device, tunnels []Tunnel) error {

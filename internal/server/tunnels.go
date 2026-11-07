@@ -5,20 +5,72 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Sanjeever/tunnelquay/internal/protocol"
 	"github.com/Sanjeever/tunnelquay/internal/store"
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 )
 
 type runtimeTunnel struct {
 	cfg      store.Tunnel
+	allow    []netip.Prefix
 	tcp      net.Listener
 	udp      *net.UDPConn
 	retired  bool
 	sessions map[string]*activeConnection
+}
+
+func parseAllowCIDRs(raw string) ([]netip.Prefix, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r' || r == ' ' || r == '\t'
+	})
+	prefixes := make([]netip.Prefix, 0, len(fields))
+	for _, token := range fields {
+		if strings.Contains(token, "/") {
+			p, err := netip.ParsePrefix(token)
+			if err != nil {
+				return nil, fmt.Errorf("来源 CIDR 格式无效：%s", token)
+			}
+			prefixes = append(prefixes, p.Masked())
+		} else {
+			addr, err := netip.ParseAddr(token)
+			if err != nil {
+				return nil, fmt.Errorf("来源 IP 格式无效：%s", token)
+			}
+			addr = addr.Unmap()
+			prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+		}
+	}
+	return prefixes, nil
+}
+
+func (r *runtimeTunnel) allowsSource(source string) bool {
+	if len(r.allow) == 0 {
+		return true
+	}
+	host, _, err := net.SplitHostPort(source)
+	if err != nil {
+		return false
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, p := range r.allow {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *runtimeTunnel) close() {
@@ -48,6 +100,9 @@ func validateConfig(c store.Tunnel) error {
 	if c.PublicPort < 0 || c.PublicPort > 65535 {
 		return errors.New("公网端口须为 1 至 65535，自动分配填写 0")
 	}
+	if _, err := parseAllowCIDRs(c.AllowCIDRs); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -56,9 +111,12 @@ func bind(cfg store.Tunnel) (*runtimeTunnel, error) {
 }
 
 func prepareBind(cfg store.Tunnel, old *runtimeTunnel) (*runtimeTunnel, error) {
-	r := &runtimeTunnel{cfg: cfg, sessions: map[string]*activeConnection{}}
+	allow, err := parseAllowCIDRs(cfg.AllowCIDRs)
+	if err != nil {
+		return nil, err
+	}
+	r := &runtimeTunnel{cfg: cfg, allow: allow, sessions: map[string]*activeConnection{}}
 	addr := net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.PublicPort))
-	var err error
 	lc := transport.ListenConfig()
 	if (cfg.Protocol == "tcp" || cfg.Protocol == "both") && (old == nil || old.tcp == nil) {
 		r.tcp, err = lc.Listen(context.Background(), "tcp", addr)
@@ -161,6 +219,7 @@ func (s *Server) SaveTunnel(cfg store.Tunnel) (store.Tunnel, error) {
 	t.Host = cfg.Host
 	t.TargetPort = cfg.TargetPort
 	t.PublicPort = cfg.PublicPort
+	t.AllowCIDRs = strings.TrimSpace(cfg.AllowCIDRs)
 	t.Enabled = cfg.Enabled
 	t.Error = ""
 
@@ -215,6 +274,7 @@ func (s *Server) SaveTunnel(cfg store.Tunnel) (store.Tunnel, error) {
 	s.tunnels[t.ID] = &t
 	if reuse {
 		oldRun.cfg = t
+		oldRun.allow = prepared.allow
 		if prepared.tcp != nil {
 			oldRun.tcp = prepared.tcp
 			listener := oldRun.tcp
@@ -306,6 +366,54 @@ func (s *Server) DeleteTunnel(id string) error {
 	delete(s.tunnels, id)
 	delete(s.rateSamples, id)
 	return nil
+}
+
+func (s *Server) ProbeTunnel(id string) (store.Tunnel, error) {
+	s.mu.RLock()
+	existing := s.tunnels[id]
+	if existing == nil {
+		s.mu.RUnlock()
+		return store.Tunnel{}, errors.New("隧道不存在")
+	}
+	t := *existing
+	p := s.peers[t.DeviceID]
+	s.mu.RUnlock()
+	if p == nil {
+		return store.Tunnel{}, errors.New("设备当前离线，无法探测目标")
+	}
+	network := "tcp"
+	if t.Protocol == "udp" {
+		network = "udp"
+	}
+	target := net.JoinHostPort(t.Host, strconv.Itoa(t.TargetPort))
+	ctx, cancel := context.WithTimeout(s.ctx, 3*time.Second)
+	defer cancel()
+	stream, err := p.session.Open(ctx)
+	if err == nil {
+		stream.SetDeadline(time.Now().Add(3 * time.Second))
+		if err = protocol.Write(stream, protocol.Message{Type: "dial", Network: network, Target: target}); err == nil {
+			var reply protocol.Message
+			if err = protocol.Read(stream, &reply); err == nil && reply.Error != "" {
+				err = errors.New(reply.Error)
+			}
+		}
+		stream.Close()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := s.tunnels[id]
+	if current == nil {
+		return store.Tunnel{}, errors.New("隧道不存在")
+	}
+	if err != nil {
+		current.TargetStatus = "failed"
+		current.TargetError = "目标连接失败：" + err.Error()
+	} else {
+		current.TargetStatus = "reachable"
+		current.TargetError = ""
+	}
+	_ = s.Store.Put("tunnels", current.ID, *current)
+	return *current, nil
 }
 
 func (s *Server) portRange() (int, int, error) {
