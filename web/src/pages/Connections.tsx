@@ -93,8 +93,8 @@ export function Connections() {
           <select name="tunnel_id" defaultValue={params.get("tunnel_id") || ""}>
             <option value="">全部隧道</option>
             {tunnels.data.map((t) => (
-              <option key={t.desired.id} value={t.desired.id}>
-                {t.desired.name}
+              <option key={t.id} value={t.id}>
+                {t.name}
               </option>
             ))}
           </select>
@@ -211,7 +211,6 @@ export function Connections() {
             {[
               ["隧道", detail.tunnel_name],
               ["设备", detail.device_name],
-              ["配置版本", `v${detail.revision}`],
               ["来源", detail.source],
               ["当时目标", detail.target],
               ["开始时间", time(detail.started)],

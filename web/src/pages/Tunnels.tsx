@@ -5,9 +5,7 @@ import {
   api,
   bytes,
   protocolName,
-  udpModeName,
   useLoad,
-  type Config,
   type Device,
   type Tunnel,
 } from "../lib/api";
@@ -18,7 +16,7 @@ export function Tunnels() {
   const tunnels = useLoad<Tunnel[]>("/tunnels", []);
   const devices = useLoad<Device[]>("/devices", []);
   const [params] = useSearchParams();
-  const [edit, setEdit] = useState<Partial<Config> | null>(null);
+  const [edit, setEdit] = useState<Partial<Tunnel> | null>(null);
   const [detail, setDetail] = useState<Tunnel | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,10 +25,9 @@ export function Tunnels() {
   const items = tunnels.data
     .filter(
       (t) =>
-        !params.get("device_id") ||
-        t.desired.device_id === params.get("device_id"),
+        !params.get("device_id") || t.device_id === params.get("device_id"),
     )
-    .sort((a, b) => a.desired.public_port - b.desired.public_port);
+    .sort((a, b) => a.public_port - b.public_port);
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const data = new FormData(e.currentTarget);
@@ -39,7 +36,6 @@ export function Tunnels() {
       name: data.get("name"),
       device_id: data.get("device_id"),
       protocol: data.get("protocol"),
-      udp_mode: data.get("udp_mode") || "datagram",
       host: data.get("host"),
       target_port: Number(data.get("target_port")),
       public_port: Number(data.get("public_port")),
@@ -63,30 +59,23 @@ export function Tunnels() {
   }
   async function toggle(t: Tunnel) {
     setError("");
-    setChanging(t.desired.id);
+    setChanging(t.id);
     tunnels.setData((items) =>
       items.map((item) =>
-        item.desired.id === t.desired.id
-          ? {
-              ...item,
-              desired: { ...item.desired, enabled: !t.desired.enabled },
-            }
-          : item,
+        item.id === t.id ? { ...item, enabled: !t.enabled } : item,
       ),
     );
     try {
-      const result = await api<Tunnel>(`/tunnels/${t.desired.id}`, "PUT", {
-        ...t.desired,
-        enabled: !t.desired.enabled,
+      const result = await api<Tunnel>(`/tunnels/${t.id}`, "PUT", {
+        ...t,
+        enabled: !t.enabled,
       });
       tunnels.setData((items) =>
-        items.map((item) =>
-          item.desired.id === result.desired.id ? result : item,
-        ),
+        items.map((item) => (item.id === result.id ? result : item)),
       );
     } catch (e) {
       tunnels.setData((items) =>
-        items.map((item) => (item.desired.id === t.desired.id ? t : item)),
+        items.map((item) => (item.id === t.id ? t : item)),
       );
       setError((e as Error).message);
     } finally {
@@ -94,11 +83,10 @@ export function Tunnels() {
     }
   }
   async function remove(t: Tunnel) {
-    if (!window.confirm(`删除隧道“${t.desired.name}”？关联连接将立即断开。`))
-      return;
+    if (!window.confirm(`删除隧道“${t.name}”？关联连接将立即断开。`)) return;
     setError("");
     try {
-      await api(`/tunnels/${t.desired.id}`, "DELETE");
+      await api(`/tunnels/${t.id}`, "DELETE");
       tunnels.refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -146,27 +134,20 @@ export function Tunnels() {
             </thead>
             <tbody>
               {items.map((t) => (
-                <tr key={t.desired.id}>
+                <tr key={t.id}>
                   <td>
                     <button
                       className="text-button"
                       onClick={() => setDetail(t)}
                     >
-                      {t.desired.name}
+                      {t.name}
                     </button>
-                    <div className="muted small">
-                      {names.get(t.desired.device_id)}
-                    </div>
+                    <div className="muted small">{names.get(t.device_id)}</div>
                   </td>
+                  <td className="mono">{protocolName(t.protocol)}</td>
+                  <td className="mono">{t.public_port}</td>
                   <td className="mono">
-                    {protocolName(t.desired.protocol)}
-                    {t.desired.protocol !== "tcp" &&
-                      t.desired.udp_mode === "stream" &&
-                      " · 可靠流"}
-                  </td>
-                  <td className="mono">{t.desired.public_port}</td>
-                  <td className="mono">
-                    {t.desired.host}:{t.desired.target_port}
+                    {t.host}:{t.target_port}
                   </td>
                   <td>
                     <State value={t.status} />
@@ -178,11 +159,6 @@ export function Tunnels() {
                         {t.error ? "配置应用失败" : "目标连接失败"}
                       </div>
                     )}
-                    {t.applied && t.applied.revision !== t.desired.revision && (
-                      <div className="muted small">
-                        待应用 v{t.desired.revision}
-                      </div>
-                    )}
                   </td>
                   <td className="mono">{t.connections}</td>
                   <td className="mono small">
@@ -192,9 +168,9 @@ export function Tunnels() {
                     <input
                       type="checkbox"
                       role="switch"
-                      aria-label={`启用 ${t.desired.name}`}
-                      checked={t.desired.enabled}
-                      disabled={changing === t.desired.id}
+                      aria-label={`启用 ${t.name}`}
+                      checked={t.enabled}
+                      disabled={changing === t.id}
                       onChange={() => void toggle(t)}
                     />
                   </td>
@@ -203,10 +179,10 @@ export function Tunnels() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`编辑 ${t.desired.name}`}
+                        aria-label={`编辑 ${t.name}`}
                         onClick={() => {
                           setError("");
-                          setEdit(t.desired);
+                          setEdit(t);
                         }}
                       >
                         <Pencil size={14} />
@@ -214,7 +190,7 @@ export function Tunnels() {
                       <Button
                         variant="ghost"
                         size="sm"
-                        aria-label={`删除 ${t.desired.name}`}
+                        aria-label={`删除 ${t.name}`}
                         onClick={() => void remove(t)}
                       >
                         <Trash2 size={14} />
@@ -262,19 +238,9 @@ export function Tunnels() {
                   disabled={!!edit.id}
                 >
                   {devices.data.map((d) => (
-                    <option
-                      key={d.id}
-                      value={d.id}
-                      disabled={d.revoked || !d.public_key}
-                    >
+                    <option key={d.id} value={d.id} disabled={d.revoked}>
                       {d.name}
-                      {d.revoked
-                        ? " · 已撤销"
-                        : !d.public_key
-                          ? " · 待迁移"
-                          : d.online
-                            ? ""
-                            : " · 离线"}
+                      {d.revoked ? " · 已撤销" : d.online ? "" : " · 离线"}
                     </option>
                   ))}
                 </select>
@@ -301,25 +267,6 @@ export function Tunnels() {
                   <option value="both">TCP + UDP</option>
                 </select>
               </label>
-              {edit.protocol !== "tcp" && (
-                <label>
-                  QUIC UDP 承载
-                  <select
-                    name="udp_mode"
-                    aria-label="QUIC UDP 承载"
-                    value={edit.udp_mode || "datagram"}
-                    onChange={(e) =>
-                      setEdit({
-                        ...edit,
-                        udp_mode: e.target.value as Config["udp_mode"],
-                      })
-                    }
-                  >
-                    <option value="datagram">DATAGRAM</option>
-                    <option value="stream">可靠流</option>
-                  </select>
-                </label>
-              )}
               <label>
                 目标地址
                 <input name="host" defaultValue={edit.host} required />
@@ -366,14 +313,14 @@ export function Tunnels() {
                 取消
               </Button>
               <Button type="submit" disabled={busy}>
-                {busy ? "正在应用…" : "保存"}
+                {busy ? "正在保存…" : "保存"}
               </Button>
             </footer>
           </form>
         </Modal>
       )}
       {detail && (
-        <Modal title={detail.desired.name} close={() => setDetail(null)}>
+        <Modal title={detail.name} close={() => setDetail(null)}>
           <dl className="details">
             <dt>监听</dt>
             <dd>
@@ -383,20 +330,10 @@ export function Tunnels() {
             <dd>
               <State value={detail.target_status} />
             </dd>
-            <dt>期望配置</dt>
+            <dt>转发规则</dt>
             <dd className="mono">
-              v{detail.desired.revision} ·{" "}
-              {protocolName(detail.desired.protocol)}
-              {detail.desired.protocol !== "tcp" &&
-                ` / ${udpModeName(detail.desired.udp_mode)}`}{" "}
-              :{detail.desired.public_port} → {detail.desired.host}:
-              {detail.desired.target_port}
-            </dd>
-            <dt>生效配置</dt>
-            <dd className="mono">
-              {detail.applied
-                ? `v${detail.applied.revision} · ${protocolName(detail.applied.protocol)}${detail.applied.protocol !== "tcp" ? ` / ${udpModeName(detail.applied.udp_mode)}` : ""} :${detail.applied.public_port} → ${detail.applied.host}:${detail.applied.target_port}`
-                : "—"}
+              {protocolName(detail.protocol)} :{detail.public_port} →{" "}
+              {detail.host}:{detail.target_port}
             </dd>
             <dt>累计流量 ↑ / ↓</dt>
             <dd>
@@ -408,7 +345,7 @@ export function Tunnels() {
           <footer>
             <Button asChild variant="outline">
               <Link
-                to={`/connections?tunnel_id=${detail.desired.id}`}
+                to={`/connections?tunnel_id=${detail.id}`}
                 onClick={() => setDetail(null)}
               >
                 查看连接

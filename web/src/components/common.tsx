@@ -64,9 +64,7 @@ export function State({ value }: { value: string }) {
     active: "进行中",
     closed: "已结束",
     interrupted: "已中断",
-    pending: "待同步",
     online: "在线",
-    migration: "待迁移",
     revoked: "已撤销",
   };
   return (

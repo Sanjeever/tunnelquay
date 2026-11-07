@@ -53,21 +53,15 @@ export function useLoad<T>(path: string, initial: T) {
   return { data, setData, error, loading, refresh };
 }
 
-export interface Config {
+export interface Tunnel {
   id: string;
   name: string;
   device_id: string;
   protocol: string;
-  udp_mode?: "datagram" | "stream";
   host: string;
   target_port: number;
   public_port: number;
   enabled: boolean;
-  revision: number;
-}
-export interface Tunnel {
-  desired: Config;
-  applied: Config | null;
   error: string;
   status: string;
   target_status: string;
@@ -98,7 +92,6 @@ export interface Connection {
   device_name: string;
   tunnel_id: string;
   tunnel_name: string;
-  revision: number;
   protocol: string;
   source: string;
   target: string;
@@ -117,8 +110,6 @@ export interface Settings {
 }
 export const protocolName = (value: string) =>
   value === "both" ? "TCP + UDP" : value.toUpperCase();
-export const udpModeName = (value?: string) =>
-  value === "stream" ? "可靠流" : "DATAGRAM";
 export const time = (value: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
 export function bytes(value: number) {
