@@ -5,17 +5,17 @@ import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { createServer, connect, type Server } from "node:net";
 import { createSocket, type Socket } from "node:dgram";
+import { DatabaseSync } from "node:sqlite";
 
-let dir: string, address: string, password: string;
+let dir: string, address: string, password: string, credential: string;
+const suffix = process.platform === "win32" ? ".exe" : "";
 let server: ChildProcess,
   client: ChildProcess,
   target: Server,
   udpTarget: Socket,
   targetPort: number;
 
-test.beforeAll(async () => {
-  dir = await mkdtemp(join(tmpdir(), "tunnelquay-browser-"));
-  const suffix = process.platform === "win32" ? ".exe" : "";
+async function launchServer() {
   server = spawn(resolve("..", "bin", `tunnelquay-server${suffix}`), [
     "-listen",
     "127.0.0.1:0",
@@ -28,10 +28,22 @@ test.beforeAll(async () => {
   };
   server.stdout!.on("data", collect);
   server.stderr!.on("data", collect);
-  await expect.poll(() => /监听=127\.0\.0\.1:\d+/.test(output)).toBe(true);
+  await expect
+    .poll(
+      () =>
+        output
+          .replace(/临时管理密码：\s+\S+/g, "临时管理密码：***")
+          .replace(/客户端接入凭据：\s+\S+/g, "客户端接入凭据：***"),
+      { timeout: 15000 },
+    )
+    .toMatch(/监听=127\.0\.0\.1:\d+/);
   address = output.match(/监听=(127\.0\.0\.1:\d+)/)![1];
-  password = output.match(/临时管理密码：\s+(\S+)/)![1];
-  const credential = output.match(/客户端接入凭据：\s+(\S+)/)![1];
+  const temporary = output.match(/临时管理密码：\s+(\S+)/);
+  if (temporary) password = temporary[1];
+  credential = output.match(/客户端接入凭据：\s+(\S+)/)![1];
+}
+
+async function launchClient() {
   client = spawn(resolve("..", "bin", `tunnelquay-client${suffix}`), [
     "-address",
     "127.0.0.1",
@@ -44,6 +56,28 @@ test.beforeAll(async () => {
     "-data-dir",
     join(dir, "client"),
   ]);
+  let output = "";
+  const collect = (b: Buffer) => {
+    output += b.toString();
+  };
+  client.stdout!.on("data", collect);
+  client.stderr!.on("data", collect);
+  await expect.poll(() => output, { timeout: 15000 }).toContain("设备已接入");
+}
+
+async function stopChild(child: ChildProcess) {
+  if (child.exitCode !== null) return;
+  const exited = new Promise<void>((resolve) =>
+    child.once("exit", () => resolve()),
+  );
+  child.kill();
+  await exited;
+}
+
+test.beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "tunnelquay-browser-"));
+  await launchServer();
+  await launchClient();
   target = createServer((socket) => socket.pipe(socket));
   await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
   targetPort = (target.address() as { port: number }).port;
@@ -235,5 +269,139 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   });
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
+
+  await page.goto("about:blank");
+  await stopChild(client);
+  await stopChild(server);
+  const database = new DatabaseSync(join(dir, "server", "tunnelquay.db"));
+  const existing = JSON.parse(
+    String(
+      database.prepare("SELECT payload FROM tunnels LIMIT 1").get()!.payload,
+    ),
+  );
+  const legacyID = "f".repeat(48),
+    tunnelID = "e".repeat(48);
+  const legacyPort = existing.desired.public_port + 1;
+  database.prepare("INSERT INTO devices(id,payload) VALUES(?,?)").run(
+    legacyID,
+    JSON.stringify({
+      id: legacyID,
+      name: "旧身份设备",
+      hostname: "legacy-host",
+      os: "linux",
+      arch: "amd64",
+      version: "0.1.0",
+      last_seen: new Date().toISOString(),
+      online: false,
+      revoked: false,
+    }),
+  );
+  database.prepare("INSERT INTO tunnels(id,payload) VALUES(?,?)").run(
+    tunnelID,
+    JSON.stringify({
+      desired: {
+        ...existing.desired,
+        id: tunnelID,
+        device_id: legacyID,
+        name: "待迁移隧道",
+        public_port: legacyPort,
+        revision: 1,
+        enabled: true,
+      },
+      applied: null,
+      status: "offline",
+      target_status: "unknown",
+    }),
+  );
+  database.close();
+  await launchServer();
+  await launchClient();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`http://${address}`);
+  await page
+    .getByLabel("管理密码", { exact: true })
+    .fill("browser-test-password-123");
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("link", { name: "设备", exact: true }).click();
+  await expect(page.getByText("待迁移", { exact: true })).toBeVisible();
+  await expect(page.getByText("在线", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "迁移 旧身份设备 的隧道", exact: true })
+    .click();
+  await expect(
+    page.getByRole("textbox", { name: "原设备身份", exact: true }),
+  ).toHaveValue(legacyID);
+  const deviceResponse = await page.request.get(
+    `http://${address}/api/devices`,
+  );
+  const authenticated = (await deviceResponse.json()).find(
+    (d: { public_key?: string }) => !!d.public_key,
+  );
+  await page
+    .getByLabel("新设备", { exact: true })
+    .selectOption(authenticated.id);
+  await expect(
+    page.getByRole("textbox", { name: "新设备身份", exact: true }),
+  ).toHaveValue(authenticated.id);
+  await page.screenshot({
+    path: "test-results/identity-migration-desktop.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "test-results/identity-migration-mobile.png",
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: "迁移并撤销原身份", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "待迁移隧道", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`http://${address}/api/tunnels`);
+      const moved = (await response.json()).find(
+        (t: { desired: { id: string } }) => t.desired.id === tunnelID,
+      );
+      return moved.applied?.device_id;
+    })
+    .toBe(authenticated.id);
+  await new Promise<void>((resolve, reject) => {
+    const socket = createSocket("udp4"),
+      payload = Buffer.from("迁移后的可靠 UDP");
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error("迁移后转发超时"));
+    }, 3000);
+    socket.once("message", (reply) => {
+      clearTimeout(timeout);
+      socket.close();
+      if (reply.equals(payload)) resolve();
+      else reject(new Error("迁移后内容错误"));
+    });
+    socket.once("error", (error) => {
+      clearTimeout(timeout);
+      socket.close();
+      reject(error);
+    });
+    socket.send(payload, legacyPort, "127.0.0.1");
+  });
+  await page.getByRole("link", { name: "设备", exact: true }).click();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "撤销 本地 QUIC 设备 的身份", exact: true })
+    .click();
+  await expect(page.getByText("已撤销", { exact: true })).toHaveCount(2);
+  await expect.poll(() => client.exitCode).toBe(1);
+  await page.screenshot({
+    path: "test-results/identity-revoked-mobile.png",
+    fullPage: true,
+  });
   expect(errors).toEqual([]);
 });

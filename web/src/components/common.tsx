@@ -66,6 +66,8 @@ export function State({ value }: { value: string }) {
     interrupted: "已中断",
     pending: "待同步",
     online: "在线",
+    migration: "待迁移",
+    revoked: "已撤销",
   };
   return (
     <span className={`state state-${value}`}>{labels[value] || value}</span>

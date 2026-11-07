@@ -262,9 +262,19 @@ export function Tunnels() {
                   disabled={!!edit.id}
                 >
                   {devices.data.map((d) => (
-                    <option key={d.id} value={d.id}>
+                    <option
+                      key={d.id}
+                      value={d.id}
+                      disabled={d.revoked || !d.public_key}
+                    >
                       {d.name}
-                      {d.online ? "" : " · 离线"}
+                      {d.revoked
+                        ? " · 已撤销"
+                        : !d.public_key
+                          ? " · 待迁移"
+                          : d.online
+                            ? ""
+                            : " · 离线"}
                     </option>
                   ))}
                 </select>

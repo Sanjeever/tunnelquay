@@ -80,6 +80,8 @@ export interface Tunnel {
 }
 export interface Device {
   id: string;
+  public_key?: string;
+  revoked: boolean;
   name: string;
   hostname: string;
   os: string;

@@ -338,6 +338,12 @@ func TestLegacyDeviceMigrationIsExplicitAndAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	newID, _ := testClient(t, s, "quic")
+	unauthorized := httptest.NewRecorder()
+	body, _ := json.Marshal(map[string]string{"device_id": newID})
+	s.Handler().ServeHTTP(unauthorized, httptest.NewRequest("POST", "/api/devices/"+legacy.ID+"/migrate", bytes.NewReader(body)))
+	if unauthorized.Code != 401 {
+		t.Fatal("未登录可以迁移身份", unauthorized.Code)
+	}
 	admin := deviceAdmin(t, s)
 	if result := admin("POST", "/api/devices/"+legacy.ID+"/migrate", map[string]string{"device_id": legacy.ID}); result.Code != 400 {
 		t.Fatal(result.Code, result.Body.String())
