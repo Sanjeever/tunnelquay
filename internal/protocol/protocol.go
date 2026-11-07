@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const Version = 1
+const Version = 2
 const MaxFrame = 1 << 20
 const HeartbeatInterval = 10 * time.Second
 const HeartbeatTimeout = 60 * time.Second
@@ -58,6 +58,7 @@ func NegotiateCapabilities(remote []string) []string {
 type Hello struct {
 	Secret       string   `json:"secret"`
 	ID           string   `json:"id"`
+	PublicKey    string   `json:"public_key,omitempty"`
 	Hostname     string   `json:"hostname"`
 	OS           string   `json:"os"`
 	Arch         string   `json:"arch"`
@@ -72,6 +73,8 @@ type Message struct {
 	ID           string          `json:"id,omitempty"`
 	Code         string          `json:"code,omitempty"`
 	Error        string          `json:"error,omitempty"`
+	Challenge    string          `json:"challenge,omitempty"`
+	Signature    string          `json:"signature,omitempty"`
 	Protocol     int             `json:"protocol,omitempty"`
 	Capabilities []string        `json:"capabilities,omitempty"`
 	Hello        *Hello          `json:"hello,omitempty"`
@@ -141,7 +144,7 @@ func Negotiate(h Hello) error {
 		}
 	}
 	if !found {
-		return errors.New("通信协议不兼容，服务端要求协议 1")
+		return fmt.Errorf("通信协议不兼容，服务端要求协议 %d，请升级客户端并迁移旧身份", Version)
 	}
 	for _, required := range []string{"config-v1", "tcp", "udp"} {
 		if !Has(h.Capabilities, required) {

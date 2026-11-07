@@ -69,7 +69,7 @@ func TestActualClientReplacementExitAndRestart(t *testing.T) {
 	hash := sha256.Sum256(content)
 	archiveHash := sha256.Sum256(archive.Bytes())
 	artifact := update.Artifact{Name: "tunnelquay-client_0.0.2_" + runtime.GOOS + "_" + runtime.GOARCH + ".zip", Component: "client", OS: runtime.GOOS, Arch: runtime.GOARCH, Size: int64(archive.Len()), SHA256: hex.EncodeToString(archiveHash[:]), Binary: binaryName, BinarySize: int64(len(content)), BinarySHA256: hex.EncodeToString(hash[:])}
-	manifest, _ := json.Marshal(update.Manifest{Version: "0.0.2", ProtocolMin: 1, ProtocolMax: 1, Required: []string{"upgrade-v1"}, Artifacts: []update.Artifact{artifact}})
+	manifest, _ := json.Marshal(update.Manifest{Version: "0.0.2", ProtocolMin: protocol.Version, ProtocolMax: protocol.Version, Required: []string{"upgrade-v1"}, Artifacts: []update.Artifact{artifact}})
 	signed := update.Signed{Manifest: manifest, Signature: ed25519.Sign(priv, manifest), Artifact: artifact.Name}
 	s := testServer(t)
 	var upload bytes.Buffer

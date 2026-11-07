@@ -2,11 +2,11 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -21,6 +21,7 @@ type Client struct {
 	Options             Options
 	ID                  string
 	secret, fingerprint string
+	identityKey         ed25519.PrivateKey
 	mu                  sync.Mutex
 	configs             map[string]protocol.Config
 	serverCapabilities  []string
@@ -44,32 +45,11 @@ func New(opts Options) (*Client, error) {
 	if err = os.MkdirAll(opts.DataDir, 0700); err != nil {
 		return nil, err
 	}
-	path := filepath.Join(opts.DataDir, "device-id")
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		b = []byte(transport.RandomID())
-		file, e := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if e != nil {
-			return nil, fmt.Errorf("创建设备身份失败，请确认没有同时首次启动的实例：%w", e)
-		}
-		_, err = file.Write(b)
-		if err == nil {
-			err = file.Sync()
-		}
-		closeErr := file.Close()
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
-		}
-	} else if err != nil {
+	key, err := loadDeviceKey(opts.DataDir)
+	if err != nil {
 		return nil, err
 	}
-	if len(b) != 48 {
-		return nil, errors.New("本地设备身份文件无效")
-	}
-	c := &Client{Options: opts, ID: string(b), secret: secret, fingerprint: fp, configs: map[string]protocol.Config{}, udp: map[uint64]*udpTarget{}, forwards: map[protocol.Stream]forwardTarget{}, installed: make(chan struct{})}
+	c := &Client{Options: opts, ID: protocol.DeviceID(key.Public().(ed25519.PublicKey)), identityKey: key, secret: secret, fingerprint: fp, configs: map[string]protocol.Config{}, udp: map[uint64]*udpTarget{}, forwards: map[protocol.Stream]forwardTarget{}, installed: make(chan struct{})}
 	state, err := c.readUpgrade()
 	if err != nil {
 		return nil, fmt.Errorf("读取升级状态失败：%w", err)
@@ -82,6 +62,10 @@ func (c *Client) Run(ctx context.Context) error {
 	for {
 		start := time.Now()
 		err := c.Connect(ctx)
+		var denied *accessError
+		if errors.As(err, &denied) && denied.code == "identity_revoked" {
+			return err
+		}
 		select {
 		case <-c.installed:
 			return nil
@@ -121,15 +105,9 @@ func (c *Client) Connect(ctx context.Context) error {
 		return err
 	}
 	h := protocol.Hello{Secret: c.secret, ID: c.ID, Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: buildinfo.Version, Protocols: []int{protocol.Version}, Capabilities: protocol.Capabilities, UpgradeTask: c.upgradeTask}
-	if err = codec.Send(protocol.Message{Type: "hello", Hello: &h}); err != nil {
-		return err
-	}
-	m, err := codec.Receive()
+	m, err := c.authenticate(codec, h)
 	if err != nil {
 		return err
-	}
-	if m.Type != "welcome" {
-		return fmt.Errorf("接入被拒绝 [%s]：%s", m.Code, m.Error)
 	}
 	if err = protocol.Negotiate(protocol.Hello{Protocols: []int{m.Protocol}, Capabilities: m.Capabilities}); err != nil {
 		return fmt.Errorf("服务端协商结果无效：%w", err)

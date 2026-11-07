@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/tls"
+	"encoding/base64"
 	"net"
 	"strings"
 	"testing"
@@ -12,7 +14,7 @@ import (
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 )
 
-func TestOldServerCannotApplyUnnegotiatedUDPStream(t *testing.T) {
+func TestServerWithoutUDPStreamCannotApplyUnnegotiatedMode(t *testing.T) {
 	identity, err := transport.LoadIdentity(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +57,26 @@ func TestOldServerCannotApplyUnnegotiatedUDPStream(t *testing.T) {
 	hello, err := codec.Receive()
 	if err != nil || !protocol.Has(hello.Hello.Capabilities, protocol.CapabilityUDPStream) {
 		t.Fatal(err, hello)
+	}
+	challenge := "udp-mode-test-auth-challenge"
+	if err = codec.Send(protocol.Message{Type: "identity_challenge", Challenge: challenge, Protocol: protocol.Version, Capabilities: []string{"config-v1", "tcp", "udp"}}); err != nil {
+		t.Fatal(err)
+	}
+	proof, err := codec.Receive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicKey, err := base64.RawStdEncoding.DecodeString(hello.Hello.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := protocol.IdentityPayload(*hello.Hello, challenge, identity.Fingerprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := base64.RawStdEncoding.DecodeString(proof.Signature)
+	if err != nil || !ed25519.Verify(publicKey, payload, signature) {
+		t.Fatal("客户端密钥证明错误", err)
 	}
 	if err = codec.Send(protocol.Message{Type: "welcome", Protocol: protocol.Version, Capabilities: []string{"config-v1", "tcp", "udp"}}); err != nil {
 		t.Fatal(err)

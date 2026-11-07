@@ -34,14 +34,20 @@ func waitFor(t *testing.T, fn func() bool) {
 func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	s := testServer(t)
 	id, cancel := testClient(t, s, "tcp")
+	key := testDeviceKey(t)
+	wrong := testDeviceHello(key, "wrong", protocol.Capabilities)
+	incompatible := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
+	incompatible.Protocols = []int{1}
+	claimed := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
+	claimed.ID = id
 	for _, tc := range []struct {
 		name  string
 		hello protocol.Hello
 		code  string
 	}{
-		{"错误秘密", protocol.Hello{ID: transport.RandomID(), Secret: "wrong", Protocols: []int{1}, Capabilities: protocol.Capabilities}, "unauthorized"},
-		{"协议不兼容", protocol.Hello{ID: transport.RandomID(), Secret: s.Identity.Secret, Protocols: []int{9}, Capabilities: protocol.Capabilities}, "incompatible"},
-		{"重复身份", protocol.Hello{ID: id, Secret: s.Identity.Secret, Protocols: []int{1}, Capabilities: protocol.Capabilities}, "duplicate_identity"},
+		{"错误秘密", wrong, "unauthorized"},
+		{"旧协议拒绝", incompatible, "incompatible"},
+		{"不能凭ID认领", claimed, "invalid_identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session, err := transport.Dial(context.Background(), s.Addr(), "tcp", transport.ClientTLS(s.Identity.Fingerprint))

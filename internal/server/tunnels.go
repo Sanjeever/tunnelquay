@@ -116,6 +116,10 @@ func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
 		s.mu.Unlock()
 		return store.Tunnel{}, errors.New("设备不存在")
 	}
+	if cfg.Enabled && s.devices[cfg.DeviceID].Revoked {
+		s.mu.Unlock()
+		return store.Tunnel{}, errors.New("设备身份已撤销，无法启用隧道")
+	}
 	var t store.Tunnel
 	if cfg.ID != "" {
 		old := s.tunnels[cfg.ID]
@@ -294,6 +298,10 @@ func (s *Server) reconcileDevice(id string) {
 	defer s.opMu.Unlock()
 	s.mu.RLock()
 	p := s.peers[id]
+	if p == nil || s.devices[id].Revoked {
+		s.mu.RUnlock()
+		return
+	}
 	var items []*store.Tunnel
 	for _, t := range s.tunnels {
 		if t.Desired.DeviceID == id && t.Desired.Enabled {
@@ -301,9 +309,6 @@ func (s *Server) reconcileDevice(id string) {
 		}
 	}
 	s.mu.RUnlock()
-	if p == nil {
-		return
-	}
 	for _, t := range items {
 		s.apply(t, p, nil)
 		s.mu.RLock()

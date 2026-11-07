@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"net"
@@ -263,7 +264,7 @@ func TestUDPModeReconnectAndServerRestart(t *testing.T) {
 	}
 }
 
-func testUDPModePeer(t *testing.T, s *Server, id string, capabilities []string) (*transport.Session, func()) {
+func testUDPModePeer(t *testing.T, s *Server, key ed25519.PrivateKey, capabilities []string) (*transport.Session, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	session, err := transport.Dial(ctx, s.Addr(), "quic", transport.ClientTLS(s.Identity.Fingerprint))
@@ -276,12 +277,9 @@ func testUDPModePeer(t *testing.T, s *Server, id string, capabilities []string) 
 	}
 	stream.SetDeadline(time.Now().Add(3 * time.Second))
 	codec := &protocol.Codec{RW: stream}
-	if err = codec.Send(protocol.Message{Type: "hello", Hello: &protocol.Hello{ID: id, Secret: s.Identity.Secret, Hostname: "能力回归", Protocols: []int{protocol.Version}, Capabilities: capabilities}}); err != nil {
-		t.Fatal(err)
-	}
-	welcome, err := codec.Receive()
-	if err != nil || welcome.Type != "welcome" || !slices.Equal(welcome.Capabilities, protocol.NegotiateCapabilities(capabilities)) {
-		t.Fatal("能力协商响应错误", welcome, err)
+	welcome := testIdentityProof(t, codec, testDeviceHello(key, s.Identity.Secret, capabilities), key, s.Identity.Fingerprint)
+	if welcome.Type != "welcome" || !slices.Equal(welcome.Capabilities, protocol.NegotiateCapabilities(capabilities)) {
+		t.Fatal("能力协商响应错误", welcome)
 	}
 	stream.SetDeadline(time.Time{})
 	done := make(chan struct{})
@@ -308,8 +306,9 @@ func testUDPModePeer(t *testing.T, s *Server, id string, capabilities []string) 
 
 func TestUDPModeUnsupportedPeerRetainsApplied(t *testing.T) {
 	s := testServer(t)
-	id := transport.RandomID()
-	_, stop := testUDPModePeer(t, s, id, []string{"config-v1", "tcp", "udp"})
+	key := testDeviceKey(t)
+	id := protocol.DeviceID(key.Public().(ed25519.PublicKey))
+	_, stop := testUDPModePeer(t, s, key, []string{"config-v1", "tcp", "udp"})
 	u := udpModeTarget(t, "")
 	tun, err := s.SaveTunnel(cfgFor(id, "udp", u.LocalAddr().String()))
 	if err != nil || tun.Error != "" {
@@ -323,7 +322,7 @@ func TestUDPModeUnsupportedPeerRetainsApplied(t *testing.T) {
 	}
 	stop()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[id].Online })
-	testUDPModePeer(t, s, id, []string{"config-v1", "tcp", "udp"})
+	testUDPModePeer(t, s, key, []string{"config-v1", "tcp", "udp"})
 	waitFor(t, func() bool {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
@@ -345,8 +344,9 @@ func TestUDPModeUnsupportedPeerRetainsApplied(t *testing.T) {
 
 func TestUDPStreamRequiresForwardConfirmation(t *testing.T) {
 	s := testServer(t)
-	id := transport.RandomID()
-	session, _ := testUDPModePeer(t, s, id, protocol.Capabilities)
+	key := testDeviceKey(t)
+	id := protocol.DeviceID(key.Public().(ed25519.PublicKey))
+	session, _ := testUDPModePeer(t, s, key, protocol.Capabilities)
 	u := udpModeTarget(t, "")
 	cfg := cfgFor(id, "udp", u.LocalAddr().String())
 	cfg.UDPMode = protocol.UDPModeStream
@@ -384,7 +384,9 @@ func TestUDPStreamRequiresForwardConfirmation(t *testing.T) {
 
 func TestUDPModeOldPeerCannotRestoreStream(t *testing.T) {
 	s := testServer(t)
-	id, stop := testClient(t, s, "quic")
+	key := testDeviceKey(t)
+	id := protocol.DeviceID(key.Public().(ed25519.PublicKey))
+	_, stop := testUDPModePeer(t, s, key, protocol.Capabilities)
 	target := udpModeTarget(t, "")
 	cfg := cfgFor(id, "udp", target.LocalAddr().String())
 	cfg.UDPMode = protocol.UDPModeStream
@@ -394,7 +396,7 @@ func TestUDPModeOldPeerCannotRestoreStream(t *testing.T) {
 	}
 	stop()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[id].Online })
-	testUDPModePeer(t, s, id, []string{"config-v1", "tcp", "udp"})
+	testUDPModePeer(t, s, key, []string{"config-v1", "tcp", "udp"})
 	waitFor(t, func() bool {
 		s.mu.RLock()
 		defer s.mu.RUnlock()

@@ -2,8 +2,8 @@ package server
 
 import (
 	"context"
-	"crypto/subtle"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -255,9 +255,11 @@ func (s *Server) servePeer(session *transport.Session) {
 		return
 	}
 	reject := func(code, msg string) {
-		codec.Send(protocol.Message{Type: "error", Code: code, Error: msg})
+		rejection := protocol.Message{Type: "error", Code: code, Error: msg}
+		codec.Send(rejection)
 		if session.QUIC != nil {
-			session.QUIC.CloseWithError(1, code+"："+msg)
+			details, _ := json.Marshal(rejection)
+			session.QUIC.CloseWithError(1, string(details))
 		}
 	}
 	if m.Type != "hello" || m.Hello == nil {
@@ -265,16 +267,12 @@ func (s *Server) servePeer(session *transport.Session) {
 		return
 	}
 	h := *m.Hello
-	if subtle.ConstantTimeCompare([]byte(h.Secret), []byte(s.Identity.Secret)) != 1 {
-		reject("unauthorized", "接入凭据错误")
-		return
-	}
 	if err = protocol.Negotiate(h); err != nil {
 		reject("incompatible", err.Error())
 		return
 	}
-	if len(h.ID) != 48 || len(h.Hostname) > 256 {
-		reject("invalid_identity", "设备身份无效")
+	if code, err := s.verifyDeviceIdentity(codec, h); err != nil {
+		reject(code, err.Error())
 		return
 	}
 	s.mu.Lock()
@@ -282,13 +280,24 @@ func (s *Server) servePeer(session *transport.Session) {
 		s.mu.Unlock()
 		return
 	}
+	d, exists := s.devices[h.ID]
+	if d.Revoked {
+		s.mu.Unlock()
+		reject("identity_revoked", "设备身份已撤销")
+		return
+	}
+	if exists && (d.PublicKey == "" || d.PublicKey != h.PublicKey) {
+		s.mu.Unlock()
+		reject("invalid_identity", "设备身份未绑定当前公钥，请由管理员迁移旧身份")
+		return
+	}
 	if _, ok := s.peers[h.ID]; ok {
 		s.mu.Unlock()
 		reject("duplicate_identity", "同一设备身份已有在线实例")
 		return
 	}
-	d := s.devices[h.ID]
 	d.ID = h.ID
+	d.PublicKey = h.PublicKey
 	d.Hostname = h.Hostname
 	if d.Name == "" {
 		d.Name = h.Hostname

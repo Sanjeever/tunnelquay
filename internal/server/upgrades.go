@@ -385,6 +385,10 @@ func (s *Server) createUpgrade(w http.ResponseWriter, r *http.Request) {
 	d, ok := s.devices[r.PathValue("id")]
 	p := s.peers[d.ID]
 	s.mu.RUnlock()
+	if d.Revoked {
+		apiError(w, 409, "identity_revoked", errors.New("设备身份已撤销"))
+		return
+	}
 	if !ok || p == nil {
 		apiError(w, 409, "offline", errors.New("设备离线"))
 		return

@@ -17,6 +17,8 @@ import (
 type Store struct{ DB *sql.DB }
 type Device struct {
 	ID           string    `json:"id"`
+	PublicKey    string    `json:"public_key,omitempty"`
+	Revoked      bool      `json:"revoked"`
 	Name         string    `json:"name"`
 	Hostname     string    `json:"hostname"`
 	OS           string    `json:"os"`
@@ -81,7 +83,7 @@ func Open(dir string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 1 {
+	if version > 2 {
 		return fail(errors.New("数据库版本高于当前程序支持范围"))
 	}
 	if version == 0 {
@@ -98,13 +100,18 @@ CREATE INDEX history_end ON history(ended);
 CREATE INDEX history_tunnel ON history(tunnel_id, started DESC);
 CREATE INDEX history_device ON history(device_id, started DESC);
 CREATE TABLE upgrades (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-PRAGMA user_version=1;`)
+PRAGMA user_version=2;`)
 		if e != nil {
 			tx.Rollback()
 			return fail(e)
 		}
 		if e = tx.Commit(); e != nil {
 			return fail(e)
+		}
+	}
+	if version == 1 {
+		if _, err = db.Exec("PRAGMA user_version=2"); err != nil {
+			return fail(err)
 		}
 	}
 	rows, err := db.Query("SELECT payload FROM history WHERE ended IS NULL")
@@ -194,6 +201,31 @@ func (s *Store) All(table string, v any) error {
 func (s *Store) DeleteTunnel(id string) error {
 	_, err := s.DB.Exec("DELETE FROM tunnels WHERE id=?", id)
 	return err
+}
+
+func (s *Store) PutDeviceAndTunnels(device Device, tunnels []Tunnel) error {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	data, err := json.Marshal(device)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE devices SET payload=? WHERE id=?", string(data), device.ID); err != nil {
+		return err
+	}
+	for _, tunnel := range tunnels {
+		data, err = json.Marshal(tunnel)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec("UPDATE tunnels SET payload=? WHERE id=?", string(data), tunnel.Desired.ID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 func (s *Store) SaveConnections(items []Connection) error {
 	if len(items) == 0 {

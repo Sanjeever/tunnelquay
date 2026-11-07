@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sanjeever/tunnelquay/internal/protocol"
 )
 
 func TestSignedPackageValidation(t *testing.T) {
@@ -28,7 +30,7 @@ func TestSignedPackageValidation(t *testing.T) {
 	binaryHash := sha256.Sum256(data)
 	archiveHash := sha256.Sum256(archive.Bytes())
 	a := Artifact{Name: "tunnelquay-client_0.1.0_windows_amd64.zip", Component: "client", OS: "windows", Arch: "amd64", Size: int64(archive.Len()), SHA256: hex.EncodeToString(archiveHash[:]), Binary: "tunnelquay-client.exe", BinarySize: int64(len(data)), BinarySHA256: hex.EncodeToString(binaryHash[:])}
-	m := Manifest{Version: "0.1.0", ProtocolMin: 1, ProtocolMax: 1, Artifacts: []Artifact{a}}
+	m := Manifest{Version: "0.1.0", ProtocolMin: protocol.Version, ProtocolMax: protocol.Version, Artifacts: []Artifact{a}}
 	b, _ := json.Marshal(m)
 	signed := Signed{Manifest: b, Signature: ed25519.Sign(priv, b), Artifact: a.Name}
 	if _, _, err := Verify(signed, "windows", "amd64"); err != nil {
