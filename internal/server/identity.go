@@ -15,10 +15,7 @@ func (s *Server) verifyDeviceIdentity(codec *protocol.Codec, hello protocol.Hell
 	device, exists := s.devices[hello.ID]
 	s.mu.RUnlock()
 	if device.Revoked {
-		return "identity_revoked", errors.New("设备身份已撤销，请重新登记新身份并由管理员迁移隧道")
-	}
-	if exists && device.PublicKey == "" {
-		return "identity_migration_required", errors.New("旧设备身份需要迁移，请使用新客户端登记后在设备页迁移隧道")
+		return "identity_revoked", errors.New("设备身份已撤销")
 	}
 	if !exists && subtle.ConstantTimeCompare([]byte(hello.Secret), []byte(s.Identity.Secret)) != 1 {
 		return "unauthorized", errors.New("接入凭据错误，无法登记新设备")

@@ -241,9 +241,9 @@ func (s *Server) servePeer(session *transport.Session) {
 		reject("identity_revoked", "设备身份已撤销")
 		return
 	}
-	if exists && (d.PublicKey == "" || d.PublicKey != h.PublicKey) {
+	if exists && d.PublicKey != h.PublicKey {
 		s.mu.Unlock()
-		reject("invalid_identity", "设备身份未绑定当前公钥，请由管理员迁移旧身份")
+		reject("invalid_identity", "设备公钥与登记身份不匹配")
 		return
 	}
 	if _, ok := s.peers[h.ID]; ok {

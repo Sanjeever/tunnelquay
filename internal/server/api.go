@@ -82,7 +82,6 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("GET /api/devices", s.listDevices)
 	protected.HandleFunc("PATCH /api/devices/{id}", s.renameDevice)
 	protected.HandleFunc("POST /api/devices/{id}/revoke", s.revokeDevice)
-	protected.HandleFunc("POST /api/devices/{id}/migrate", s.migrateDevice)
 	protected.HandleFunc("GET /api/tunnels", s.listTunnels)
 	protected.HandleFunc("POST /api/tunnels", s.saveTunnel)
 	protected.HandleFunc("PUT /api/tunnels/{id}", s.saveTunnel)

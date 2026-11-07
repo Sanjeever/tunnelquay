@@ -16,7 +16,6 @@ import (
 
 	"github.com/Sanjeever/tunnelquay/internal/client"
 	"github.com/Sanjeever/tunnelquay/internal/protocol"
-	"github.com/Sanjeever/tunnelquay/internal/store"
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 )
 
@@ -284,120 +283,6 @@ func TestDeviceRevocationStopsForwardingAndSurvivesRestart(t *testing.T) {
 	err = blocked.Run(runCtx)
 	if err == nil || !strings.Contains(err.Error(), "identity_revoked") {
 		t.Fatal("撤销后仍接入或继续重试", err)
-	}
-}
-
-func TestLegacyDeviceMigrationIsExplicitAndAtomic(t *testing.T) {
-	s := testServer(t)
-	legacy := store.Device{ID: transport.RandomID(), Name: "旧设备", Hostname: "legacy"}
-	if err := s.Store.Put("devices", legacy.ID, legacy); err != nil {
-		t.Fatal(err)
-	}
-	s.mu.Lock()
-	s.devices[legacy.ID] = legacy
-	s.mu.Unlock()
-	key := testDeviceKey(t)
-	claimed := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
-	claimed.ID = legacy.ID
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	session, err := transport.Dial(ctx, s.Addr(), transport.ClientTLS(s.Identity.Fingerprint))
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream, err := session.Open(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stream.SetDeadline(time.Now().Add(3 * time.Second))
-	if rejection := testIdentityProof(t, &protocol.Codec{RW: stream}, claimed, key, s.Identity.Fingerprint); rejection.Code != "identity_migration_required" {
-		t.Fatal("共享凭据自动绑定了旧身份", rejection)
-	}
-	session.Close()
-	target := tcpTarget(t, "A")
-	cfg := cfgFor(legacy.ID, "both", target.Addr().String())
-	tun, err := s.SaveTunnel(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	other := cfg
-	other.ID = ""
-	other.Enabled = false
-	disabled, err := s.SaveTunnel(other)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newID, _ := testClient(t, s)
-	unauthorized := httptest.NewRecorder()
-	body, _ := json.Marshal(map[string]string{"device_id": newID})
-	s.Handler().ServeHTTP(unauthorized, httptest.NewRequest("POST", "/api/devices/"+legacy.ID+"/migrate", bytes.NewReader(body)))
-	if unauthorized.Code != 401 {
-		t.Fatal("未登录可以迁移身份", unauthorized.Code)
-	}
-	admin := deviceAdmin(t, s)
-	if result := admin("POST", "/api/devices/"+legacy.ID+"/migrate", map[string]string{"device_id": legacy.ID}); result.Code != 400 {
-		t.Fatal(result.Code, result.Body.String())
-	}
-	if result := admin("POST", "/api/devices/"+newID+"/migrate", map[string]string{"device_id": legacy.ID}); result.Code != 409 {
-		t.Fatal("允许迁移在线源设备", result.Code)
-	}
-	if _, err = s.Store.DB.Exec("CREATE TRIGGER fail_identity_migration BEFORE UPDATE ON tunnels BEGIN SELECT RAISE(ABORT,'forced migration failure'); END"); err != nil {
-		t.Fatal(err)
-	}
-	if result := admin("POST", "/api/devices/"+legacy.ID+"/migrate", map[string]string{"device_id": newID}); result.Code != 500 {
-		t.Fatal("持久化失败却报告迁移成功", result.Code)
-	}
-	var stored []store.Device
-	if err = s.Store.All("devices", &stored); err != nil {
-		t.Fatal(err)
-	}
-	for _, d := range stored {
-		if d.ID == legacy.ID && d.Revoked {
-			t.Fatal("失败事务撤销了原身份")
-		}
-	}
-	s.mu.RLock()
-	unchanged := s.tunnels[tun.Desired.ID].Desired.DeviceID == legacy.ID && !s.devices[legacy.ID].Revoked
-	s.mu.RUnlock()
-	if !unchanged {
-		t.Fatal("失败迁移修改了内存配置")
-	}
-	if _, err = s.Store.DB.Exec("DROP TRIGGER fail_identity_migration"); err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	history := store.Connection{ID: transport.RandomID(), DeviceID: legacy.ID, TunnelID: tun.Desired.ID, Protocol: "udp", Started: now, Ended: &now}
-	if err = s.Store.SaveConnections([]store.Connection{history}); err != nil {
-		t.Fatal(err)
-	}
-	result := admin("POST", "/api/devices/"+legacy.ID+"/migrate", map[string]string{"device_id": newID})
-	if result.Code != 200 {
-		t.Fatal(result.Code, result.Body.String())
-	}
-	waitFor(t, func() bool {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		r := s.running[tun.Desired.ID]
-		return r != nil && r.cfg.DeviceID == newID
-	})
-	s.mu.RLock()
-	moved := *s.tunnels[tun.Desired.ID]
-	kept := *s.tunnels[disabled.Desired.ID]
-	revoked := s.devices[legacy.ID].Revoked
-	s.mu.RUnlock()
-	if !revoked || moved.Desired.PublicPort != tun.Desired.PublicPort || moved.Desired.Revision != tun.Desired.Revision+1 || kept.Desired.Enabled || kept.Desired.DeviceID != newID {
-		t.Fatal("迁移未保留端口、启停状态或撤销原身份", moved, kept)
-	}
-	conn := dialTunnel(t, moved.Desired.PublicPort)
-	one := make([]byte, 1)
-	if _, err = io.ReadFull(conn, one); err != nil || string(one) != "A" {
-		conn.Close()
-		t.Fatal(err)
-	}
-	conn.Close()
-	_, total, err := s.Store.History(store.Filter{DeviceID: legacy.ID, Page: 1, Limit: 10})
-	if err != nil || total != 1 {
-		t.Fatal("迁移改写历史身份", total, err)
 	}
 }
 

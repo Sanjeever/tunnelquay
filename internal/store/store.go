@@ -83,7 +83,7 @@ func Open(dir string) (*Store, error) {
 	if err = db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fail(err)
 	}
-	if version > 2 {
+	if version > 1 {
 		return fail(errors.New("数据库版本高于当前程序支持范围"))
 	}
 	if version == 0 {
@@ -100,18 +100,13 @@ CREATE INDEX history_end ON history(ended);
 CREATE INDEX history_tunnel ON history(tunnel_id, started DESC);
 CREATE INDEX history_device ON history(device_id, started DESC);
 CREATE TABLE upgrades (id TEXT PRIMARY KEY, payload TEXT NOT NULL);
-PRAGMA user_version=2;`)
+PRAGMA user_version=1;`)
 		if e != nil {
 			tx.Rollback()
 			return fail(e)
 		}
 		if e = tx.Commit(); e != nil {
 			return fail(e)
-		}
-	}
-	if version == 1 {
-		if _, err = db.Exec("PRAGMA user_version=2"); err != nil {
-			return fail(err)
 		}
 	}
 	rows, err := db.Query("SELECT payload FROM history WHERE ended IS NULL")
