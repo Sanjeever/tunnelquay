@@ -26,6 +26,8 @@ Web 反向代理转发 HTTP 到 7000，保留 Host，并在 HTTPS 入口设置 `
 
 先完成前端构建，再执行 `go test ./... -timeout=5m` 与 `go vet ./...`。测试使用临时数据库与本地 TCP/UDP 服务，覆盖两种接入、TCP 双向传输与半关闭、UDP 多来源与大数据报、配置切换与失败保留、恢复、停用、认证、改密和历史清理。非 `-short` 测试还运行代表性负载和实际客户端替换、退出、重启；升级验证使用隔离临时密钥和两个测试版本，不修改正式信任配置。Windows 另覆盖临时目录写入拒绝 ACL，测试后恢复。
 
+可靠 UDP 承载的能力协商、旧端兼容、模式切换、跨代次停用和重启恢复回归见 [服务端测试](../internal/server/udp_mode_test.go) 与 [客户端测试](../internal/client/udp_mode_test.go)。UDP 内容校验包含三个来源与 8192 字节报文；系统在发送阶段以 `EMSGSIZE` 拒绝 65507 字节时，该最大数据报用例明确跳过，8192 字节仍执行。最大数据报的实际通过环境见验收记录。
+
 竞争检测需支持 CGO 的本机工具链；CI 命令为 `go test -race ./internal/... -short -timeout=3m`，`-short` 会跳过代表性负载与实际升级。
 
 浏览器检查先构建两个程序到 `bin/`（Windows 使用 `.exe`），执行 `pnpm --dir web exec playwright install chromium`，再执行 `pnpm --dir web exec playwright test`。测试自行启动临时服务端、QUIC 客户端和 TCP 目标，检查管理操作与真实转发。截图与失败跟踪位于 `web/test-results`，不提交。测试结束删除隔离数据。

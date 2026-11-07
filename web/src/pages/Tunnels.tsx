@@ -5,6 +5,7 @@ import {
   api,
   bytes,
   protocolName,
+  udpModeName,
   useLoad,
   type Config,
   type Device,
@@ -38,6 +39,7 @@ export function Tunnels() {
       name: data.get("name"),
       device_id: data.get("device_id"),
       protocol: data.get("protocol"),
+      udp_mode: data.get("udp_mode") || "datagram",
       host: data.get("host"),
       target_port: Number(data.get("target_port")),
       public_port: Number(data.get("public_port")),
@@ -156,7 +158,12 @@ export function Tunnels() {
                       {names.get(t.desired.device_id)}
                     </div>
                   </td>
-                  <td className="mono">{protocolName(t.desired.protocol)}</td>
+                  <td className="mono">
+                    {protocolName(t.desired.protocol)}
+                    {t.desired.protocol !== "tcp" &&
+                      t.desired.udp_mode === "stream" &&
+                      " · 可靠流"}
+                  </td>
                   <td className="mono">{t.desired.public_port}</td>
                   <td className="mono">
                     {t.desired.host}:{t.desired.target_port}
@@ -271,12 +278,38 @@ export function Tunnels() {
               </label>
               <label>
                 协议
-                <select name="protocol" defaultValue={edit.protocol}>
+                <select
+                  name="protocol"
+                  aria-label="协议"
+                  value={edit.protocol}
+                  onChange={(e) =>
+                    setEdit({ ...edit, protocol: e.target.value })
+                  }
+                >
                   <option value="tcp">TCP</option>
                   <option value="udp">UDP</option>
                   <option value="both">TCP + UDP</option>
                 </select>
               </label>
+              {edit.protocol !== "tcp" && (
+                <label>
+                  QUIC UDP 承载
+                  <select
+                    name="udp_mode"
+                    aria-label="QUIC UDP 承载"
+                    value={edit.udp_mode || "datagram"}
+                    onChange={(e) =>
+                      setEdit({
+                        ...edit,
+                        udp_mode: e.target.value as Config["udp_mode"],
+                      })
+                    }
+                  >
+                    <option value="datagram">DATAGRAM</option>
+                    <option value="stream">可靠流</option>
+                  </select>
+                </label>
+              )}
               <label>
                 目标地址
                 <input name="host" defaultValue={edit.host} required />
@@ -343,14 +376,16 @@ export function Tunnels() {
             <dt>期望配置</dt>
             <dd className="mono">
               v{detail.desired.revision} ·{" "}
-              {protocolName(detail.desired.protocol)} :
-              {detail.desired.public_port} → {detail.desired.host}:
+              {protocolName(detail.desired.protocol)}
+              {detail.desired.protocol !== "tcp" &&
+                ` / ${udpModeName(detail.desired.udp_mode)}`}{" "}
+              :{detail.desired.public_port} → {detail.desired.host}:
               {detail.desired.target_port}
             </dd>
             <dt>生效配置</dt>
             <dd className="mono">
               {detail.applied
-                ? `v${detail.applied.revision} · ${protocolName(detail.applied.protocol)} :${detail.applied.public_port} → ${detail.applied.host}:${detail.applied.target_port}`
+                ? `v${detail.applied.revision} · ${protocolName(detail.applied.protocol)}${detail.applied.protocol !== "tcp" ? ` / ${udpModeName(detail.applied.udp_mode)}` : ""} :${detail.applied.public_port} → ${detail.applied.host}:${detail.applied.target_port}`
                 : "—"}
             </dd>
             <dt>累计流量 ↑ / ↓</dt>

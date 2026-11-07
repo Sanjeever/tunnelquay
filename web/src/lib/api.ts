@@ -58,6 +58,7 @@ export interface Config {
   name: string;
   device_id: string;
   protocol: string;
+  udp_mode?: "datagram" | "stream";
   host: string;
   target_port: number;
   public_port: number;
@@ -114,6 +115,8 @@ export interface Settings {
 }
 export const protocolName = (value: string) =>
   value === "both" ? "TCP + UDP" : value.toUpperCase();
+export const udpModeName = (value?: string) =>
+  value === "stream" ? "可靠流" : "DATAGRAM";
 export const time = (value: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
 export function bytes(value: number) {

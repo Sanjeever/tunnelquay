@@ -4,11 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { createServer, connect, type Server } from "node:net";
+import { createSocket, type Socket } from "node:dgram";
 
 let dir: string, address: string, password: string;
 let server: ChildProcess,
   client: ChildProcess,
   target: Server,
+  udpTarget: Socket,
   targetPort: number;
 
 test.beforeAll(async () => {
@@ -45,12 +47,20 @@ test.beforeAll(async () => {
   target = createServer((socket) => socket.pipe(socket));
   await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
   targetPort = (target.address() as { port: number }).port;
+  udpTarget = createSocket("udp4");
+  udpTarget.on("message", (message, source) => {
+    udpTarget.send(message, source.port, source.address);
+  });
+  await new Promise<void>((resolve) =>
+    udpTarget.bind(targetPort, "127.0.0.1", resolve),
+  );
 });
 
 test.afterAll(async () => {
   client?.kill();
   server?.kill();
   target?.close();
+  udpTarget?.close();
   await Promise.all(
     [client, server].filter(Boolean).map(
       (child) =>
@@ -129,6 +139,59 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
     });
     socket.on("error", reject);
   });
+  await page.getByRole("button", { name: "编辑 浏览器验收隧道" }).click();
+  await expect(page.getByLabel("QUIC UDP 承载", { exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByLabel("协议", { exact: true }).selectOption("both");
+  await expect(page.getByLabel("QUIC UDP 承载", { exact: true })).toHaveValue(
+    "datagram",
+  );
+  await page
+    .getByLabel("QUIC UDP 承载", { exact: true })
+    .selectOption("stream");
+  await page.screenshot({
+    path: "test-results/udp-stream-form.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const response = await page.request.get(`http://${address}/api/tunnels`);
+      return (await response.json())[0].applied.udp_mode;
+    })
+    .toBe("stream");
+  await Promise.all(
+    [1, 2, 3].map(
+      (source) =>
+        new Promise<void>((resolve, reject) => {
+          const socket = createSocket("udp4");
+          const payload = Buffer.alloc(8192, source);
+          const timeout = setTimeout(() => {
+            socket.close();
+            reject(new Error("可靠 UDP 回包超时"));
+          }, 5000);
+          socket.once("message", (reply) => {
+            clearTimeout(timeout);
+            socket.close();
+            if (reply.equals(payload)) resolve();
+            else reject(new Error("可靠 UDP 来源或内容不符"));
+          });
+          socket.once("error", (error) => {
+            clearTimeout(timeout);
+            socket.close();
+            reject(error);
+          });
+          socket.send(payload, port, "127.0.0.1");
+        }),
+    ),
+  );
+  await page
+    .getByRole("button", { name: "浏览器验收隧道", exact: true })
+    .click();
+  await expect(page.getByRole("dialog").getByText(/可靠流/)).toHaveCount(2);
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.screenshot({
     path: "test-results/tunnels-desktop.png",
     fullPage: true,
