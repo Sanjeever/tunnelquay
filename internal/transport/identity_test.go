@@ -37,4 +37,20 @@ func TestIdentityPersistenceAndPin(t *testing.T) {
 	if _, _, err = ParseCredential("bad"); err == nil {
 		t.Fatal("应拒绝无效凭据")
 	}
+	connStr := FormatConnect("203.0.113.10:7000", a.Credential())
+	addr, cred, err := ParseConnect(connStr)
+	if err != nil || addr != "203.0.113.10:7000" || cred != a.Credential() {
+		t.Fatalf("连接串解析失败：%v %s %s", err, addr, cred)
+	}
+	if _, _, err = ParseConnect("tq://bad@203.0.113.10:7000"); err == nil {
+		t.Fatal("应拒绝无效连接串凭据")
+	}
+	oldSecret := a.Secret
+	if err = a.RotateSecret(dir); err != nil || a.Secret == oldSecret {
+		t.Fatalf("重置登记秘密失败：%v", err)
+	}
+	reloaded, err := LoadIdentity(dir)
+	if err != nil || reloaded.Secret != a.Secret || reloaded.Fingerprint != a.Fingerprint {
+		t.Fatal("重置登记秘密后证书指纹改变或秘密未持久化")
+	}
 }

@@ -13,8 +13,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -79,6 +81,59 @@ func LoadIdentity(dir string) (*Identity, error) {
 }
 func (i *Identity) Credential() string {
 	return "tq1." + base64.RawURLEncoding.EncodeToString([]byte(i.Secret+"."+i.Fingerprint))
+}
+func (i *Identity) RotateSecret(dir string) error {
+	p := filepath.Join(dir, "identity.json")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	var f identityFile
+	if err = json.Unmarshal(b, &f); err != nil {
+		return err
+	}
+	f.Secret = RandomID()
+	b, err = json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	tmp := p + ".tmp"
+	if err = os.WriteFile(tmp, b, 0600); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, p); err != nil {
+		return err
+	}
+	i.Secret = f.Secret
+	return nil
+}
+func FormatConnect(address, credential string) string {
+	return "tq://" + credential + "@" + address
+}
+func ParseConnect(s string) (string, string, error) {
+	s = strings.TrimSpace(s)
+	s = strings.TrimPrefix(s, "tq://")
+	s = strings.TrimPrefix(s, "tq1://")
+	var cred, addr string
+	if before, after, ok := strings.Cut(s, "@"); ok {
+		cred, addr = before, after
+	} else if before, after, ok := strings.Cut(s, "#"); ok {
+		addr, cred = before, after
+	} else {
+		return "", "", errors.New("接入连接串格式无效，应为 tq://凭据@地址:端口")
+	}
+	host, portStr, err := net.SplitHostPort(addr)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "", "", errors.New("接入连接串中的服务端地址与端口无效")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return "", "", errors.New("接入连接串中的服务端端口无效")
+	}
+	if _, _, err := ParseCredential(cred); err != nil {
+		return "", "", err
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), cred, nil
 }
 func ParseCredential(s string) (string, string, error) {
 	if !strings.HasPrefix(s, "tq1.") {
