@@ -40,7 +40,6 @@ type Server struct {
 	devices           map[string]store.Device
 	tunnels           map[string]*store.Tunnel
 	running           map[string]*runtimeTunnel
-	generations       map[string][]*runtimeTunnel
 	udpQueuedBytes    atomic.Int64
 	historyBacklog    atomic.Int64
 	peerSlots         chan struct{}
@@ -73,7 +72,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{Options: opts, Store: db, Identity: id, peers: map[string]*peer{}, devices: map[string]store.Device{}, tunnels: map[string]*store.Tunnel{}, running: map[string]*runtimeTunnel{}, generations: map[string][]*runtimeTunnel{}, connections: map[string]*activeConnection{}, sessions: map[string]loginSession{}, ctx: ctx, cancel: cancel}
+	s := &Server{Options: opts, Store: db, Identity: id, peers: map[string]*peer{}, devices: map[string]store.Device{}, tunnels: map[string]*store.Tunnel{}, running: map[string]*runtimeTunnel{}, connections: map[string]*activeConnection{}, sessions: map[string]loginSession{}, ctx: ctx, cancel: cancel}
 	s.peerSlots = make(chan struct{}, 128)
 	s.fileSlots = make(chan struct{}, 2)
 	s.rateSamples = map[string][2]int64{}
@@ -94,12 +93,15 @@ func New(opts Options) (*Server, error) {
 	}
 	for _, t := range tunnels {
 		t.Status = "offline"
+		if !t.Enabled {
+			t.Status = "disabled"
+		}
 		t.TargetStatus = "unknown"
 		t.Connections = 0
 		t.UpRate = 0
 		t.DownRate = 0
-		s.rateSamples[t.Desired.ID] = [2]int64{t.Up, t.Down}
-		s.tunnels[t.Desired.ID] = &t
+		s.rateSamples[t.ID] = [2]int64{t.Up, t.Down}
+		s.tunnels[t.ID] = &t
 	}
 	if err = s.initAdmin(); err != nil {
 		return fail(err)
@@ -178,7 +180,7 @@ func (s *Server) Close() error {
 	s.opMu.Lock()
 	s.mu.Lock()
 	s.closed = true
-	for id := range s.generations {
+	for id := range s.running {
 		s.stopLocked(id)
 	}
 	for _, p := range s.peers {
@@ -286,9 +288,11 @@ func (s *Server) servePeer(session *transport.Session) {
 		dev.RTT = nil
 		s.devices[d.ID] = dev
 		for id, t := range s.tunnels {
-			if t.Desired.DeviceID == d.ID {
+			if t.DeviceID == d.ID {
 				s.stopLocked(id)
-				t.Status = "offline"
+				if t.Enabled {
+					t.Status = "offline"
+				}
 			}
 		}
 	}()
@@ -299,7 +303,7 @@ func (s *Server) servePeer(session *transport.Session) {
 	s.wg.Go(func() { s.reconcileDevice(d.ID) })
 	s.wg.Go(func() { s.heartbeat(p) })
 	s.wg.Go(func() { s.acceptClientStreams(p) })
-	s.wg.Go(func() { s.confirmUpgrade(d.ID, h.Version, h.UpgradeTask) })
+	s.wg.Go(func() { s.confirmUpgrade(d.ID, h.Version) })
 	for {
 		stream.SetDeadline(time.Now().Add(protocol.ControlIdleTimeout))
 		msg, e := codec.Receive()
@@ -314,15 +318,20 @@ func (s *Server) servePeer(session *transport.Session) {
 			}
 			return
 		}
-		if ch, ok := p.pending.Load(msg.ID); ok {
-			select {
-			case ch.(chan protocol.Message) <- msg:
-			default:
+		if msg.ID != "" {
+			if ch, ok := p.pending.Load(msg.ID); ok {
+				select {
+				case ch.(chan protocol.Message) <- msg:
+				default:
+				}
+				continue
 			}
 		}
 		if msg.Type == "upgrade_status" {
 			s.upgradeStatus(d.ID, msg)
+			continue
 		}
+		_ = codec.Send(protocol.Message{Type: "error", ID: msg.ID, Code: "unsupported_message", Error: "不支持的控制消息"})
 	}
 }
 func (s *Server) request(p *peer, m protocol.Message, timeout time.Duration) (protocol.Message, error) {

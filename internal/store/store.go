@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sanjeever/tunnelquay/internal/protocol"
 	_ "modernc.org/sqlite"
 )
 
@@ -31,17 +30,23 @@ type Device struct {
 	RTT          *float64  `json:"rtt"`
 }
 type Tunnel struct {
-	Desired      protocol.Config  `json:"desired"`
-	Applied      *protocol.Config `json:"applied"`
-	Error        string           `json:"error"`
-	Status       string           `json:"status"`
-	TargetStatus string           `json:"target_status"`
-	TargetError  string           `json:"target_error"`
-	Connections  int              `json:"connections"`
-	Up           int64            `json:"up"`
-	Down         int64            `json:"down"`
-	UpRate       float64          `json:"up_rate"`
-	DownRate     float64          `json:"down_rate"`
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	DeviceID     string  `json:"device_id"`
+	Protocol     string  `json:"protocol"`
+	Host         string  `json:"host"`
+	TargetPort   int     `json:"target_port"`
+	PublicPort   int     `json:"public_port"`
+	Enabled      bool    `json:"enabled"`
+	Error        string  `json:"error"`
+	Status       string  `json:"status"`
+	TargetStatus string  `json:"target_status"`
+	TargetError  string  `json:"target_error"`
+	Connections  int     `json:"connections"`
+	Up           int64   `json:"up"`
+	Down         int64   `json:"down"`
+	UpRate       float64 `json:"up_rate"`
+	DownRate     float64 `json:"down_rate"`
 }
 type Connection struct {
 	ID         string     `json:"id"`
@@ -49,7 +54,6 @@ type Connection struct {
 	DeviceName string     `json:"device_name"`
 	TunnelID   string     `json:"tunnel_id"`
 	TunnelName string     `json:"tunnel_name"`
-	Revision   int64      `json:"revision"`
 	Protocol   string     `json:"protocol"`
 	Source     string     `json:"source"`
 	Target     string     `json:"target"`
@@ -216,7 +220,7 @@ func (s *Store) PutDeviceAndTunnels(device Device, tunnels []Tunnel) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec("UPDATE tunnels SET payload=? WHERE id=?", string(data), tunnel.Desired.ID); err != nil {
+		if _, err = tx.Exec("UPDATE tunnels SET payload=? WHERE id=?", string(data), tunnel.ID); err != nil {
 			return err
 		}
 	}

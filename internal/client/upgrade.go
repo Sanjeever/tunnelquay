@@ -21,52 +21,6 @@ import (
 	"github.com/minio/selfupdate"
 )
 
-type upgradeState struct {
-	ID      string `json:"id"`
-	Version string `json:"version"`
-	Stage   string `json:"stage"`
-	Error   string `json:"error"`
-}
-
-func (c *Client) readUpgrade() (upgradeState, error) {
-	var state upgradeState
-	b, err := os.ReadFile(filepath.Join(c.Options.DataDir, "upgrade.json"))
-	if os.IsNotExist(err) {
-		return state, nil
-	}
-	if err != nil {
-		return state, err
-	}
-	err = json.Unmarshal(b, &state)
-	return state, err
-}
-func (c *Client) saveUpgrade(state upgradeState) error {
-	b, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	p := filepath.Join(c.Options.DataDir, "upgrade.json")
-	f, err := os.CreateTemp(c.Options.DataDir, ".upgrade-")
-	if err != nil {
-		return err
-	}
-	name := f.Name()
-	defer os.Remove(name)
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(b)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	e := f.Close()
-	if err != nil {
-		return err
-	}
-	if e != nil {
-		return e
-	}
-	return os.Rename(name, p)
-}
 func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec *protocol.Codec, message protocol.Message) {
 	status := func(stage string, err error) {
 		text := ""
@@ -88,12 +42,7 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 		status("failed", errors.New("升级任务身份无效"))
 		return
 	}
-	state, err := c.readUpgrade()
-	if err != nil {
-		status("failed", fmt.Errorf("读取本地升级状态失败：%w", err))
-		return
-	}
-	if state.ID == task.ID && (state.Stage == "installed" || buildinfo.Version == task.Version) {
+	if buildinfo.Version == task.Version {
 		status("installed", nil)
 		return
 	}
@@ -143,7 +92,7 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 		status("failed", errors.New(header.Error))
 		return
 	}
-	if header.Type != "upgrade_file" || header.Revision != a.Size {
+	if header.Type != "upgrade_file" || header.Size != a.Size {
 		status("failed", errors.New("升级传输元数据无效"))
 		return
 	}
@@ -171,11 +120,6 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 	defer os.Remove(binary)
 	if err = update.Extract(archive, binary, a); err != nil {
 		status("failed", err)
-		return
-	}
-	state = upgradeState{task.ID, task.Version, "prepared", ""}
-	if err = c.saveUpgrade(state); err != nil {
-		status("failed", fmt.Errorf("保存升级状态失败：%w", err))
 		return
 	}
 	source, err := os.Open(binary)
@@ -206,10 +150,6 @@ func (c *Client) upgrade(ctx context.Context, session *transport.Session, codec 
 	if err = selfupdate.CommitBinary(opts); err != nil {
 		status("failed", fmt.Errorf("替换程序失败，请检查文件并人工恢复：%w", err))
 		return
-	}
-	state.Stage = "installed"
-	if err = c.saveUpgrade(state); err != nil {
-		slog.Error("程序已替换，保存本地确认状态失败", "错误", err)
 	}
 	status("installed", nil)
 	slog.Info("新版客户端已安装，等待外部守护或人工重启", "版本", task.Version)

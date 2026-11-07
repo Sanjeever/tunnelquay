@@ -461,7 +461,7 @@ func (s *Server) upgradeStatus(deviceID string, m protocol.Message) {
 		}
 	}
 }
-func (s *Server) confirmUpgrade(deviceID, version, taskID string) {
+func (s *Server) confirmUpgrade(deviceID, version string) {
 	s.upgradeMu.Lock()
 	defer s.upgradeMu.Unlock()
 	var tasks []update.Task
@@ -473,7 +473,7 @@ func (s *Server) confirmUpgrade(deviceID, version, taskID string) {
 		if task.DeviceID != deviceID || task.Stage == "completed" || task.Stage == "failed" {
 			continue
 		}
-		if task.ID == taskID && task.Version == version {
+		if task.Version == version {
 			task.Stage = "completed"
 			task.Error = ""
 		} else {
@@ -542,7 +542,7 @@ func (s *Server) sendUpgrade(p *peer, stream protocol.Stream, id string) {
 			return
 		}
 		defer f.Close()
-		if err = protocol.Write(stream, protocol.Message{Type: "upgrade_file", Revision: a.Size}); err != nil {
+		if err = protocol.Write(stream, protocol.Message{Type: "upgrade_file", Size: a.Size}); err != nil {
 			return
 		}
 		if sent, e := io.CopyN(stream, f, a.Size); e != nil {

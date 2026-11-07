@@ -94,7 +94,7 @@ func run() error {
 		return err
 	}
 	defer os.RemoveAll(work)
-	manifest := update.Manifest{Version: pkg.Version, ProtocolMin: protocol.Version, ProtocolMax: protocol.Version, Required: []string{"config-v1", "tcp", "udp", "upgrade-v1"}, Artifacts: []update.Artifact{}}
+	manifest := update.Manifest{Version: pkg.Version, ProtocolMin: protocol.Version, ProtocolMax: protocol.Version, Required: []string{"tcp", "udp", "upgrade-v1"}, Artifacts: []update.Artifact{}}
 	for _, platform := range strings.Split(*platforms, ",") {
 		parts := strings.Split(platform, "/")
 		if len(parts) != 2 {

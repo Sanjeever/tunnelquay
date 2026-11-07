@@ -9,13 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sanjeever/tunnelquay/internal/protocol"
 	"github.com/Sanjeever/tunnelquay/internal/store"
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 )
 
 type runtimeTunnel struct {
-	cfg      protocol.Config
+	cfg      store.Tunnel
 	tcp      net.Listener
 	udp      *net.UDPConn
 	retired  bool
@@ -30,8 +29,10 @@ func (r *runtimeTunnel) close() {
 		r.udp.Close()
 	}
 }
+
 func protocolsOverlap(a, b string) bool { return a == b || a == "both" || b == "both" }
-func validateConfig(c protocol.Config) error {
+
+func validateConfig(c store.Tunnel) error {
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 128 {
 		return errors.New("隧道名称须为 1 至 128 字符")
 	}
@@ -49,10 +50,12 @@ func validateConfig(c protocol.Config) error {
 	}
 	return nil
 }
-func bind(cfg protocol.Config) (*runtimeTunnel, error) {
+
+func bind(cfg store.Tunnel) (*runtimeTunnel, error) {
 	return prepareBind(cfg, nil)
 }
-func prepareBind(cfg protocol.Config, old *runtimeTunnel) (*runtimeTunnel, error) {
+
+func prepareBind(cfg store.Tunnel, old *runtimeTunnel) (*runtimeTunnel, error) {
 	r := &runtimeTunnel{cfg: cfg, sessions: map[string]*activeConnection{}}
 	addr := net.JoinHostPort("0.0.0.0", strconv.Itoa(cfg.PublicPort))
 	var err error
@@ -75,7 +78,8 @@ func prepareBind(cfg protocol.Config, old *runtimeTunnel) (*runtimeTunnel, error
 	}
 	return r, nil
 }
-func (s *Server) portFreeLocked(cfg protocol.Config) bool {
+
+func (s *Server) portFreeLocked(cfg store.Tunnel) bool {
 	if s.listener != nil {
 		_, port, _ := net.SplitHostPort(s.Addr())
 		if strconv.Itoa(cfg.PublicPort) == port {
@@ -86,56 +90,52 @@ func (s *Server) portFreeLocked(cfg protocol.Config) bool {
 		if id == cfg.ID {
 			continue
 		}
-		if t.Desired.PublicPort == cfg.PublicPort && protocolsOverlap(t.Desired.Protocol, cfg.Protocol) {
-			return false
-		}
-		if t.Applied != nil && t.Applied.PublicPort == cfg.PublicPort && protocolsOverlap(t.Applied.Protocol, cfg.Protocol) {
+		if t.PublicPort == cfg.PublicPort && protocolsOverlap(t.Protocol, cfg.Protocol) {
 			return false
 		}
 	}
 	return true
 }
-func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
+
+func (s *Server) SaveTunnel(cfg store.Tunnel) (store.Tunnel, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	if err := validateConfig(cfg); err != nil {
 		return store.Tunnel{}, err
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.closed {
-		s.mu.Unlock()
 		return store.Tunnel{}, errors.New("服务端正在退出")
 	}
 	if _, ok := s.devices[cfg.DeviceID]; !ok {
-		s.mu.Unlock()
 		return store.Tunnel{}, errors.New("设备不存在")
 	}
 	if cfg.Enabled && s.devices[cfg.DeviceID].Revoked {
-		s.mu.Unlock()
 		return store.Tunnel{}, errors.New("设备身份已撤销，无法启用隧道")
 	}
 	var t store.Tunnel
 	if cfg.ID != "" {
 		old := s.tunnels[cfg.ID]
 		if old == nil {
-			s.mu.Unlock()
 			return t, errors.New("隧道不存在")
 		}
-		t = *old
-		cfg.Revision = old.Desired.Revision + 1
-		if old.Desired.DeviceID != cfg.DeviceID {
-			s.mu.Unlock()
+		if old.DeviceID != cfg.DeviceID {
 			return t, errors.New("已有隧道不能更换设备")
+		}
+		t = *old
+		if old.Host != cfg.Host || old.TargetPort != cfg.TargetPort || old.Protocol != cfg.Protocol {
+			t.TargetStatus = "unknown"
+			t.TargetError = ""
 		}
 	} else {
 		cfg.ID = transport.RandomID()
-		cfg.Revision = 1
+		t.TargetStatus = "unknown"
 	}
 	var prepared *runtimeTunnel
 	if cfg.PublicPort == 0 {
 		minPort, maxPort, err := s.portRange()
 		if err != nil {
-			s.mu.Unlock()
 			return t, err
 		}
 		for p := minPort; p <= maxPort; p++ {
@@ -149,57 +149,47 @@ func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
 			}
 		}
 		if prepared == nil {
-			s.mu.Unlock()
 			return t, errors.New("自动端口范围内没有可用端口")
 		}
 	} else if !s.portFreeLocked(cfg) {
-		s.mu.Unlock()
 		return t, errors.New("公网端口已分配或与服务端接入端口冲突")
 	}
-	t.Desired = cfg
+	t.ID = cfg.ID
+	t.Name = cfg.Name
+	t.DeviceID = cfg.DeviceID
+	t.Protocol = cfg.Protocol
+	t.Host = cfg.Host
+	t.TargetPort = cfg.TargetPort
+	t.PublicPort = cfg.PublicPort
+	t.Enabled = cfg.Enabled
 	t.Error = ""
-	if err := s.Store.Put("tunnels", cfg.ID, t); err != nil {
+
+	if !t.Enabled {
 		if prepared != nil {
 			prepared.close()
 		}
-		s.mu.Unlock()
-		return t, err
-	}
-	s.tunnels[cfg.ID] = &t
-	if !cfg.Enabled {
-		s.stopLocked(cfg.ID)
 		t.Status = "disabled"
-		if prepared != nil {
-			prepared.close()
+		if err := s.Store.Put("tunnels", t.ID, t); err != nil {
+			return t, err
 		}
-		result := t
-		s.mu.Unlock()
-		return result, nil
+		s.stopLocked(t.ID)
+		s.tunnels[t.ID] = &t
+		return t, nil
 	}
-	p := s.peers[cfg.DeviceID]
-	s.mu.Unlock()
+	p := s.peers[t.DeviceID]
 	if p == nil {
 		if prepared != nil {
 			prepared.close()
 		}
-		s.mu.Lock()
 		t.Status = "offline"
-		result := t
-		s.mu.Unlock()
-		return result, nil
+		if err := s.Store.Put("tunnels", t.ID, t); err != nil {
+			return t, err
+		}
+		s.tunnels[t.ID] = &t
+		return t, nil
 	}
-	s.apply(&t, p, prepared)
-	s.mu.RLock()
-	result := t
-	s.mu.RUnlock()
-	return result, nil
-}
-func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
-	s.mu.Lock()
-	cfg := t.Desired
-	old := s.running[cfg.ID]
-	reuse := old != nil && old.cfg.PublicPort == cfg.PublicPort
-	var err error
+	oldRun := s.running[t.ID]
+	reuse := oldRun != nil && oldRun.cfg.PublicPort == t.PublicPort
 	if reuse && prepared != nil {
 		prepared.close()
 		prepared = nil
@@ -207,154 +197,100 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	if prepared == nil {
 		var shared *runtimeTunnel
 		if reuse {
-			shared = old
+			shared = oldRun
 		}
-		prepared, err = prepareBind(cfg, shared)
-	}
-	s.mu.Unlock()
-	if err == nil {
-		var reply protocol.Message
-		reply, err = s.request(p, protocol.Message{Type: "prepare", Config: &cfg, Revision: cfg.Revision}, protocol.ControlRequestTimeout)
-		if err == nil && (reply.Type != "ack" || reply.Revision != cfg.Revision) {
-			err = errors.New("客户端配置确认版本不匹配")
+		var err error
+		prepared, err = prepareBind(t, shared)
+		if err != nil {
+			return t, err
 		}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err != nil {
+	t.Status = "running"
+	if err := s.Store.Put("tunnels", t.ID, t); err != nil {
 		if prepared != nil {
 			prepared.close()
 		}
-		t.Error = err.Error()
-		if old != nil {
-			t.Status = "running"
-		} else {
-			t.Status = "failed"
-		}
-		if e := s.Store.Put("tunnels", cfg.ID, t); e != nil {
-			t.Error += "；保存应用结果失败：" + e.Error()
-		}
-		return
+		return t, err
 	}
-	updated := *t
-	updated.Applied = &cfg
-	updated.Error = ""
-	updated.Status = "running"
-	if t.Applied == nil || t.Applied.Host != cfg.Host || t.Applied.TargetPort != cfg.TargetPort || t.Applied.Protocol != cfg.Protocol {
-		updated.TargetStatus = "unknown"
-		updated.TargetError = ""
-	}
-	if err = s.Store.Put("tunnels", cfg.ID, updated); err != nil {
-		if prepared != nil {
-			prepared.close()
-		}
-		t.Error = "保存生效配置失败：" + err.Error()
-		return
-	}
-	*t = updated
+	s.tunnels[t.ID] = &t
 	if reuse {
-		old.cfg = cfg
+		oldRun.cfg = t
 		if prepared.tcp != nil {
-			old.tcp = prepared.tcp
-			listener := old.tcp
-			s.wg.Go(func() { s.acceptTCP(old, p, listener) })
+			oldRun.tcp = prepared.tcp
+			listener := oldRun.tcp
+			s.wg.Go(func() { s.acceptTCP(oldRun, p, listener) })
 		}
 		if prepared.udp != nil {
-			old.udp = prepared.udp
-			conn := old.udp
-			s.wg.Go(func() { s.acceptUDP(old, p, conn) })
+			oldRun.udp = prepared.udp
+			conn := oldRun.udp
+			s.wg.Go(func() { s.acceptUDP(oldRun, p, conn) })
 		}
-		if cfg.Protocol == "udp" && old.tcp != nil {
-			old.tcp.Close()
-			old.tcp = nil
+		if t.Protocol == "udp" && oldRun.tcp != nil {
+			oldRun.tcp.Close()
+			oldRun.tcp = nil
 		}
-		if cfg.Protocol == "tcp" && old.udp != nil && len(old.sessions) == 0 {
-			old.udp.Close()
-			old.udp = nil
+		if t.Protocol == "tcp" && oldRun.udp != nil {
+			oldRun.udp.Close()
+			oldRun.udp = nil
+			for _, c := range oldRun.sessions {
+				c.close()
+			}
 		}
-		return
+		return t, nil
 	}
-	if old != nil {
-		old.retired = true
-		if old.tcp != nil {
-			old.tcp.Close()
-		}
-		if old.udp != nil && len(old.sessions) == 0 {
-			old.udp.Close()
+	if oldRun != nil {
+		oldRun.retired = true
+		oldRun.close()
+		for _, c := range oldRun.sessions {
+			c.close()
 		}
 	}
-	s.running[cfg.ID] = prepared
-	s.generations[cfg.ID] = append(s.generations[cfg.ID], prepared)
+	s.running[t.ID] = prepared
 	s.startRuntime(prepared, p)
+	return t, nil
 }
+
 func (s *Server) reconcileDevice(id string) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	s.mu.RLock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	p := s.peers[id]
 	if p == nil || s.devices[id].Revoked {
-		s.mu.RUnlock()
 		return
 	}
-	var items []*store.Tunnel
 	for _, t := range s.tunnels {
-		if t.Desired.DeviceID == id && t.Desired.Enabled {
-			items = append(items, t)
+		if t.DeviceID != id || !t.Enabled || s.running[t.ID] != nil {
+			continue
 		}
-	}
-	s.mu.RUnlock()
-	for _, t := range items {
-		s.apply(t, p, nil)
-		s.mu.RLock()
-		fallback := s.running[t.Desired.ID] == nil && t.Applied != nil
-		var applied protocol.Config
-		if fallback {
-			applied = *t.Applied
+		r, err := bind(*t)
+		if err != nil {
+			t.Status = "failed"
+			t.Error = err.Error()
+			_ = s.Store.Put("tunnels", t.ID, *t)
+			continue
 		}
-		s.mu.RUnlock()
-		if fallback {
-			r, err := bind(applied)
-			if err == nil {
-				_, err = s.request(p, protocol.Message{Type: "prepare", Config: &applied}, protocol.ControlRequestTimeout)
-			}
-			if err != nil {
-				if r != nil {
-					r.close()
-				}
-				continue
-			}
-			s.mu.Lock()
-			s.running[applied.ID] = r
-			s.generations[applied.ID] = append(s.generations[applied.ID], r)
-			t.Status = "running"
-			s.startRuntime(r, p)
-			s.mu.Unlock()
-		}
+		t.Status = "running"
+		t.Error = ""
+		_ = s.Store.Put("tunnels", t.ID, *t)
+		s.running[t.ID] = r
+		s.startRuntime(r, p)
 	}
 }
+
 func (s *Server) stopLocked(id string) {
-	for _, r := range s.generations[id] {
+	if r := s.running[id]; r != nil {
 		r.retired = true
 		r.close()
+		delete(s.running, id)
 	}
-	delete(s.generations, id)
-	delete(s.running, id)
 	for _, c := range s.connections {
 		if c.record.TunnelID == id {
 			c.close()
 		}
 	}
-	if t := s.tunnels[id]; t != nil {
-		if p := s.peers[t.Desired.DeviceID]; p != nil {
-			message := protocol.Message{Type: "stop", Config: &protocol.Config{ID: id, Revision: t.Desired.Revision}}
-			s.wg.Go(func() {
-				if err := p.control.Send(message); err != nil {
-					p.session.Close()
-				}
-			})
-		}
-	}
 }
+
 func (s *Server) DeleteTunnel(id string) error {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
@@ -371,6 +307,7 @@ func (s *Server) DeleteTunnel(id string) error {
 	delete(s.rateSamples, id)
 	return nil
 }
+
 func (s *Server) portRange() (int, int, error) {
 	v, err := s.Store.Get("port_range")
 	if err != nil {
@@ -385,6 +322,7 @@ func (s *Server) portRange() (int, int, error) {
 	}
 	return a, b, nil
 }
+
 func (s *Server) startRuntime(r *runtimeTunnel, p *peer) {
 	if r.tcp != nil {
 		listener := r.tcp
@@ -395,6 +333,7 @@ func (s *Server) startRuntime(r *runtimeTunnel, p *peer) {
 		s.wg.Go(func() { s.acceptUDP(r, p, conn) })
 	}
 }
+
 func (s *Server) maintenance() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -414,21 +353,6 @@ func (s *Server) maintenance() {
 				if idle {
 					c.close()
 				}
-			}
-			for id, all := range s.generations {
-				next := all[:0]
-				for _, r := range all {
-					if !r.retired && r.cfg.Protocol == "tcp" && r.udp != nil && len(r.sessions) == 0 {
-						r.udp.Close()
-						r.udp = nil
-					}
-					if r.retired && len(r.sessions) == 0 {
-						r.close()
-					} else {
-						next = append(next, r)
-					}
-				}
-				s.generations[id] = next
 			}
 			live := map[string][2]int64{}
 			for _, c := range s.connections {

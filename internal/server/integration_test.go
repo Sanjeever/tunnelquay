@@ -37,7 +37,7 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	key := testDeviceKey(t)
 	wrong := testDeviceHello(key, "wrong", protocol.Capabilities)
 	incompatible := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
-	incompatible.Protocols = []int{1}
+	incompatible.Protocols = []int{99}
 	claimed := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
 	claimed.ID = id
 	for _, tc := range []struct {
@@ -75,12 +75,12 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	}
 	cancel()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[id].Online })
-	tun.Desired.Enabled = false
-	updated, err := s.SaveTunnel(tun.Desired)
+	tun.Enabled = false
+	updated, err := s.SaveTunnel(tun)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Desired.PublicPort != tun.Desired.PublicPort {
+	if updated.PublicPort != tun.PublicPort {
 		t.Fatal("离线丢失端口")
 	}
 	occupied, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -184,11 +184,11 @@ func tcpTarget(t *testing.T, prefix string) net.Listener {
 	}()
 	return l
 }
-func cfgFor(id, network, target string) protocol.Config {
+func cfgFor(id, network, target string) store.Tunnel {
 	h, p, _ := net.SplitHostPort(target)
 	var port int
 	fmt.Sscan(p, &port)
-	return protocol.Config{Name: "本地转发", DeviceID: id, Protocol: network, Host: h, TargetPort: port, Enabled: true}
+	return store.Tunnel{Name: "本地转发", DeviceID: id, Protocol: network, Host: h, TargetPort: port, Enabled: true}
 }
 func dialTunnel(t *testing.T, port int) *net.TCPConn {
 	t.Helper()
@@ -207,7 +207,7 @@ func TestTransportsTCPUDPAndHistory(t *testing.T) {
 	if err != nil || tunnel.Error != "" {
 		t.Fatalf("隧道：%v %s", err, tunnel.Error)
 	}
-	c := dialTunnel(t, tunnel.Desired.PublicPort)
+	c := dialTunnel(t, tunnel.PublicPort)
 	payload := bytes.Repeat([]byte("双向传输"), 10000)
 	if _, err = c.Write(payload); err != nil {
 		t.Fatal(err)
@@ -241,7 +241,7 @@ func TestTransportsTCPUDPAndHistory(t *testing.T) {
 		t.Fatalf("UDP 隧道：%v %s", err, ut.Error)
 	}
 	for i := 0; i < 3; i++ {
-		conn, e := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", ut.Desired.PublicPort))
+		conn, e := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", ut.PublicPort))
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -264,12 +264,12 @@ func TestTransportsTCPUDPAndHistory(t *testing.T) {
 			})
 		}
 	}
-	ut.Desired.Enabled = false
-	if _, err = s.SaveTunnel(ut.Desired); err != nil {
+	ut.Enabled = false
+	if _, err = s.SaveTunnel(ut); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.connections) == 0 })
-	if err = s.DeleteTunnel(tunnel.Desired.ID); err != nil {
+	if err = s.DeleteTunnel(tunnel.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.flushHistory(); err != nil {
@@ -289,27 +289,27 @@ func TestConfigSwitchRollbackDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	old := dialTunnel(t, tun.Desired.PublicPort)
+	old := dialTunnel(t, tun.PublicPort)
 	defer old.Close()
 	one := make([]byte, 1)
 	if _, err = io.ReadFull(old, one); err != nil || string(one) != "A" {
 		t.Fatal("旧目标失败", err)
 	}
 	update := cfgFor(id, "tcp", b.Addr().String())
-	update.ID = tun.Desired.ID
-	update.PublicPort = tun.Desired.PublicPort
+	update.ID = tun.ID
+	update.PublicPort = tun.PublicPort
 	updated, err := s.SaveTunnel(update)
 	if err != nil || updated.Error != "" {
 		t.Fatal(err, updated.Error)
 	}
-	newConn := dialTunnel(t, updated.Desired.PublicPort)
+	newConn := dialTunnel(t, updated.PublicPort)
 	defer newConn.Close()
 	if _, err = io.ReadFull(newConn, one); err != nil || string(one) != "B" {
 		t.Fatal("新目标失败", err)
 	}
 	update.Protocol = "both"
 	combined, err := s.SaveTunnel(update)
-	if err != nil || combined.Error != "" || combined.Applied.Protocol != "both" {
+	if err != nil || combined.Error != "" || combined.Protocol != "both" {
 		t.Fatal("同端口切换组合协议失败", err, combined.Error)
 	}
 	update.Protocol = "tcp"
@@ -324,12 +324,19 @@ func TestConfigSwitchRollbackDisable(t *testing.T) {
 	defer occupied.Close()
 	_, p, _ := net.SplitHostPort(occupied.Addr().String())
 	fmt.Sscan(p, &update.PublicPort)
-	failed, err := s.SaveTunnel(update)
-	if err != nil || failed.Error == "" || failed.Applied.PublicPort != tun.Desired.PublicPort {
-		t.Fatalf("失败更新没有保留旧配置：%v %#v", err, failed)
+	if _, err := s.SaveTunnel(update); err == nil {
+		t.Fatal("失败更新应返回错误")
 	}
-	failed.Desired.Enabled = false
-	s.SaveTunnel(failed.Desired)
+	s.mu.RLock()
+	retained := *s.tunnels[tun.ID]
+	s.mu.RUnlock()
+	if retained.PublicPort != tun.PublicPort {
+		t.Fatalf("失败更新没有保留旧配置：%#v", retained)
+	}
+	retained.Enabled = false
+	if _, err = s.SaveTunnel(retained); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = old.Read(one); err == nil {
 		t.Fatal("停用后旧连接未关闭")
 	}

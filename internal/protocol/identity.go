@@ -17,5 +17,5 @@ func IdentityPayload(hello Hello, challenge, fingerprint string) ([]byte, error)
 		Challenge   string `json:"challenge"`
 		Fingerprint string `json:"fingerprint"`
 		Hello       Hello  `json:"hello"`
-	}{"tunnelquay-device-identity-v2", challenge, fingerprint, hello})
+	}{"tunnelquay-device-identity-v1", challenge, fingerprint, hello})
 }

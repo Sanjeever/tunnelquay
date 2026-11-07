@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"io"
 	"log/slog"
@@ -31,6 +30,7 @@ type activeConnection struct {
 }
 
 func reportError(msg string, err error) { slog.Error(msg, "错误", err) }
+
 func (c *activeConnection) close() {
 	c.once.Do(func() {
 		close(c.done)
@@ -44,6 +44,7 @@ func (c *activeConnection) close() {
 		}
 	})
 }
+
 func (s *Server) newConnection(r *runtimeTunnel, network, source string, local net.Conn, addr *net.UDPAddr) *activeConnection {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -53,7 +54,25 @@ func (s *Server) newConnection(r *runtimeTunnel, network, source string, local n
 	}
 	cfg := r.cfg
 	device := s.devices[cfg.DeviceID]
-	c := &activeConnection{record: store.Connection{ID: transport.RandomID(), DeviceID: cfg.DeviceID, DeviceName: device.Name, TunnelID: cfg.ID, TunnelName: cfg.Name, Revision: cfg.Revision, Protocol: network, Source: source, Target: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.TargetPort)), Started: time.Now().UTC(), Result: "active"}, local: local, runtime: r, source: addr, last: time.Now(), done: make(chan struct{})}
+	c := &activeConnection{
+		record: store.Connection{
+			ID:         transport.RandomID(),
+			DeviceID:   cfg.DeviceID,
+			DeviceName: device.Name,
+			TunnelID:   cfg.ID,
+			TunnelName: cfg.Name,
+			Protocol:   network,
+			Source:     source,
+			Target:     net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.TargetPort)),
+			Started:    time.Now().UTC(),
+			Result:     "active",
+		},
+		local:   local,
+		runtime: r,
+		source:  addr,
+		last:    time.Now(),
+		done:    make(chan struct{}),
+	}
 	if network == "udp" {
 		if len(r.sessions) >= 256 {
 			return nil
@@ -68,6 +87,7 @@ func (s *Server) newConnection(r *runtimeTunnel, network, source string, local n
 	}
 	return c
 }
+
 func (s *Server) finish(c *activeConnection, result, reason string) {
 	c.close()
 	s.mu.Lock()
@@ -96,10 +116,11 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 		t.Connections--
 		t.Up += rec.Up
 		t.Down += rec.Down
-		if result == "failed" && t.Applied != nil && t.Applied.Revision == rec.Revision {
+		target := net.JoinHostPort(t.Host, strconv.Itoa(t.TargetPort))
+		if result == "failed" && target == rec.Target {
 			t.TargetStatus = "failed"
 			t.TargetError = reason
-		} else if rec.Up+rec.Down > 0 && t.Applied != nil && t.Applied.Revision == rec.Revision {
+		} else if rec.Up+rec.Down > 0 && target == rec.Target {
 			t.TargetStatus = "reachable"
 			t.TargetError = ""
 		}
@@ -109,6 +130,7 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 	s.historyBacklog.Add(1)
 	s.historyMu.Unlock()
 }
+
 func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
 	defer cancel()
@@ -128,7 +150,7 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 	default:
 	}
 	stream.SetDeadline(time.Now().Add(10 * time.Second))
-	m := protocol.Message{Type: "forward", Network: network, Target: target, Config: &protocol.Config{ID: c.record.TunnelID, Revision: c.record.Revision}}
+	m := protocol.Message{Type: "dial", Network: network, Target: target}
 	if err = protocol.Write(stream, m); err != nil {
 		transport.Abort(stream)
 		return nil, err
@@ -145,6 +167,7 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 	stream.SetDeadline(time.Time{})
 	return stream, nil
 }
+
 func (s *Server) acceptTCP(r *runtimeTunnel, p *peer, listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
@@ -178,6 +201,7 @@ func (w counterWriter) Write(b []byte) (int, error) {
 	w.c.mu.Unlock()
 	return n, e
 }
+
 func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	stream, err := s.openForward(c, p)
 	if err != nil {
@@ -186,7 +210,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	}
 	defer stream.Close()
 	s.mu.Lock()
-	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
+	if t := s.tunnels[c.record.TunnelID]; t != nil && net.JoinHostPort(t.Host, strconv.Itoa(t.TargetPort)) == c.record.Target {
 		t.TargetStatus = "reachable"
 		t.TargetError = ""
 	}
@@ -224,6 +248,7 @@ func (s *Server) forwardTCP(c *activeConnection, p *peer) {
 	}
 	s.finish(c, result, reason)
 }
+
 func (s *Server) acceptUDP(r *runtimeTunnel, p *peer, conn *net.UDPConn) {
 	b := make([]byte, 65535)
 	for {
@@ -265,28 +290,7 @@ func (s *Server) acceptUDP(r *runtimeTunnel, p *peer, conn *net.UDPConn) {
 		c.mu.Unlock()
 	}
 }
-func writePacket(w io.Writer, b []byte) error {
-	if len(b) > 65507 {
-		return errors.New("UDP 数据报过大")
-	}
-	var h [2]byte
-	binary.BigEndian.PutUint16(h[:], uint16(len(b)))
-	if _, err := w.Write(h[:]); err != nil {
-		return err
-	}
-	_, err := w.Write(b)
-	return err
-}
-func readPacket(r io.Reader) ([]byte, error) {
-	var h [2]byte
-	if _, err := io.ReadFull(r, h[:]); err != nil {
-		return nil, err
-	}
-	n := int(binary.BigEndian.Uint16(h[:]))
-	b := make([]byte, n)
-	_, err := io.ReadFull(r, b)
-	return b, err
-}
+
 func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 	stream, err := s.openForward(c, p)
 	if err != nil {
@@ -298,7 +302,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 	go func() {
 		defer close(readDone)
 		for {
-			b, e := readPacket(stream)
+			b, e := protocol.ReadPacket(stream)
 			if e != nil {
 				c.close()
 				return
@@ -310,7 +314,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 		select {
 		case b := <-c.packets:
 			s.udpQueuedBytes.Add(-int64(len(b)))
-			err = writePacket(stream, b)
+			err = protocol.WritePacket(stream, b)
 			if err != nil {
 				c.close()
 			} else {
@@ -330,6 +334,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 		}
 	}
 }
+
 func (s *Server) deliverUDP(c *activeConnection, b []byte) {
 	select {
 	case <-c.done:
@@ -345,12 +350,13 @@ func (s *Server) deliverUDP(c *activeConnection, b []byte) {
 	c.last = time.Now()
 	c.mu.Unlock()
 	s.mu.Lock()
-	if t := s.tunnels[c.record.TunnelID]; t != nil && t.Applied != nil && t.Applied.Revision == c.record.Revision {
+	if t := s.tunnels[c.record.TunnelID]; t != nil && net.JoinHostPort(t.Host, strconv.Itoa(t.TargetPort)) == c.record.Target {
 		t.TargetStatus = "reachable"
 		t.TargetError = ""
 	}
 	s.mu.Unlock()
 }
+
 func (s *Server) flushHistory() error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()

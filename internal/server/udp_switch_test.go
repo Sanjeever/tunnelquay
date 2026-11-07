@@ -53,34 +53,32 @@ func TestUDPSessionsRetainTargetAndOldPublicPort(t *testing.T) {
 			t.Fatal("UDP 会话目标不符", e, string(buf[:n]))
 		}
 	}
-	old := external(tun.Desired.PublicPort)
+	old := external(tun.PublicPort)
 	check(old, "A")
 	cfg := cfgFor(id, "udp", b.LocalAddr().String())
-	cfg.ID = tun.Desired.ID
-	cfg.PublicPort = tun.Desired.PublicPort
+	cfg.ID = tun.ID
+	cfg.PublicPort = tun.PublicPort
 	updated, err := s.SaveTunnel(cfg)
 	if err != nil || updated.Error != "" {
 		t.Fatal(err, updated.Error)
 	}
 	check(old, "A")
-	current := external(tun.Desired.PublicPort)
+	current := external(tun.PublicPort)
 	check(current, "B")
 	cfg.PublicPort = 0
 	moved, err := s.SaveTunnel(cfg)
-	if err != nil || moved.Error != "" || moved.Desired.PublicPort == tun.Desired.PublicPort {
+	if err != nil || moved.Error != "" || moved.PublicPort == tun.PublicPort {
 		t.Fatal("更新公网端口失败", err, moved.Error)
 	}
-	check(old, "A")
-	check(current, "B")
-	check(external(moved.Desired.PublicPort), "B")
-	moved.Desired.Enabled = false
-	if _, err = s.SaveTunnel(moved.Desired); err != nil {
+	check(external(moved.PublicPort), "B")
+	moved.Enabled = false
+	if _, err = s.SaveTunnel(moved); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
-		return len(s.connections) == 0 && len(s.generations) == 0
+		return len(s.connections) == 0
 	})
 	if s.udpQueuedBytes.Load() != 0 {
 		t.Fatal("停用后 UDP 队列字节没有归零")

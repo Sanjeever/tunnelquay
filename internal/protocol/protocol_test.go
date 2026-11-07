@@ -16,7 +16,7 @@ func TestNegotiationAndOptionalFields(t *testing.T) {
 		t.Fatal("应拒绝不兼容协议")
 	}
 	h.Protocols = []int{Version}
-	h.Capabilities = []string{"tcp", "udp"}
+	h.Capabilities = []string{"tcp"}
 	if Negotiate(h) == nil {
 		t.Fatal("应拒绝缺少必要能力")
 	}

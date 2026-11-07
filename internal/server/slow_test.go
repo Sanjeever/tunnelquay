@@ -85,7 +85,7 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 			if err != nil || tun.Error != "" {
 				t.Fatal("创建慢链路隧道失败", err, tun.Error)
 			}
-			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tun.Desired.PublicPort), 10*time.Second)
+			conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", tun.PublicPort), 10*time.Second)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,7 +110,7 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 				}
 				io.Copy(io.Discard, res.Body)
 				res.Body.Close()
-				next := tun.Desired
+				next := tun
 				next.Name = "慢链路传输中更新"
 				updated, e := s.SaveTunnel(next)
 				if e == nil && updated.Error != "" {
@@ -155,7 +155,7 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 				}
 				waitSlowState(t, 45*time.Second, "设备离线", func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[c.ID].Online })
 				s.mu.RLock()
-				disabled := s.tunnels[tun.Desired.ID].Desired
+				disabled := *s.tunnels[tun.ID]
 				s.mu.RUnlock()
 				disabled.Enabled = false
 				if _, e := s.SaveTunnel(disabled); e != nil {
@@ -168,9 +168,9 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 				})
 				s.mu.RLock()
 				restored := s.peers[c.ID]
-				running := s.running[tun.Desired.ID]
+				running := s.running[tun.ID]
 				active := len(s.connections)
-				latest := s.tunnels[tun.Desired.ID].Desired
+				latest := *s.tunnels[tun.ID]
 				s.mu.RUnlock()
 				if restored == original || running != nil || active != 0 || latest.Enabled {
 					t.Fatal("重连没有清理原连接或重新启用了停用隧道")

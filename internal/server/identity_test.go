@@ -231,7 +231,7 @@ func TestDeviceRevocationStopsForwardingAndSurvivesRestart(t *testing.T) {
 	if err != nil || tun.Error != "" {
 		t.Fatal(err, tun.Error)
 	}
-	conn := dialTunnel(t, tun.Desired.PublicPort)
+	conn := dialTunnel(t, tun.PublicPort)
 	one := make([]byte, 1)
 	if _, err = io.ReadFull(conn, one); err != nil || string(one) != "A" {
 		conn.Close()
@@ -258,7 +258,7 @@ func TestDeviceRevocationStopsForwardingAndSurvivesRestart(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("撤销没有断开客户端")
 	}
-	if _, err = s.SaveTunnel(tun.Desired); err == nil {
+	if _, err = s.SaveTunnel(tun); err == nil {
 		t.Fatal("已撤销设备可启用隧道")
 	}
 	dir := s.Options.DataDir

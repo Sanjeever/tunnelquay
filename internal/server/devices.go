@@ -25,7 +25,7 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	d.Revoked, d.Online, d.RTT = true, false, nil
 	var tunnels []store.Tunnel
 	for _, t := range s.tunnels {
-		if t.Desired.DeviceID == d.ID {
+		if t.DeviceID == d.ID {
 			next := *t
 			next.Status = "offline"
 			next.Error = "设备身份已撤销"
@@ -38,8 +38,8 @@ func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	s.devices[d.ID] = d
 	for _, t := range tunnels {
-		s.stopLocked(t.Desired.ID)
-		*s.tunnels[t.Desired.ID] = t
+		s.stopLocked(t.ID)
+		*s.tunnels[t.ID] = t
 	}
 	if p := s.peers[d.ID]; p != nil {
 		transport.Interrupt(p.stream)

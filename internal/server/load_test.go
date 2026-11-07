@@ -44,8 +44,8 @@ func TestRepresentativeLoad(t *testing.T) {
 		if e != nil || tun.Error != "" {
 			t.Fatal(e, tun.Error)
 		}
-		ports = append(ports, tun.Desired.PublicPort)
-		tunnelIDs = append(tunnelIDs, tun.Desired.ID)
+		ports = append(ports, tun.PublicPort)
+		tunnelIDs = append(tunnelIDs, tun.ID)
 	}
 	var peak atomic.Uint64
 	stop := make(chan struct{})
@@ -126,5 +126,5 @@ func TestRepresentativeLoad(t *testing.T) {
 		}
 	}
 	waitFor(t, func() bool { return runtime.NumGoroutine() <= baseline+15 })
-	t.Logf("环境 %s/%s，Go %s，CPU %d；5 设备（3 TCP、2 QUIC），20 TCP 隧道，20 并发，单连接 %.2f MiB，双向 %.2f MiB/s，耗时 %s；100 次新连接首字节 p50=%s，p95=%s；采样峰值 Go HeapAlloc %.2f MiB（同一测试进程包含服务端、客户端和负载），清理后 goroutine %d，基线 %d", runtime.GOOS, runtime.GOARCH, runtime.Version(), runtime.NumCPU(), float64(len(payload))/(1<<20), float64(len(payload)*40)/(1<<20)/duration.Seconds(), duration, latencies[49], latencies[94], float64(peak.Load())/(1<<20), runtime.NumGoroutine(), baseline)
+	t.Logf("环境 %s/%s，Go %s，CPU %d；5 设备（TCP），20 TCP 隧道，20 并发，单连接 %.2f MiB，双向 %.2f MiB/s，耗时 %s；100 次新连接首字节 p50=%s，p95=%s；采样峰值 Go HeapAlloc %.2f MiB（同一测试进程包含服务端、客户端和负载），清理后 goroutine %d，基线 %d", runtime.GOOS, runtime.GOARCH, runtime.Version(), runtime.NumCPU(), float64(len(payload))/(1<<20), float64(len(payload)*40)/(1<<20)/duration.Seconds(), duration, latencies[49], latencies[94], float64(peak.Load())/(1<<20), runtime.NumGoroutine(), baseline)
 }

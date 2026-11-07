@@ -275,14 +275,14 @@ func (s *Server) listTunnels(w http.ResponseWriter, r *http.Request) {
 	for _, t := range s.tunnels {
 		item := *t
 		for _, c := range s.connections {
-			if c.record.TunnelID == t.Desired.ID {
+			if c.record.TunnelID == t.ID {
 				c.mu.Lock()
 				item.Up += c.record.Up
 				item.Down += c.record.Down
 				c.mu.Unlock()
 			}
 		}
-		if !t.Desired.Enabled {
+		if !t.Enabled {
 			item.Status = "disabled"
 		}
 		items = append(items, item)
@@ -291,7 +291,7 @@ func (s *Server) listTunnels(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, items)
 }
 func (s *Server) saveTunnel(w http.ResponseWriter, r *http.Request) {
-	var cfg protocol.Config
+	var cfg store.Tunnel
 	if !decode(w, r, &cfg) {
 		return
 	}

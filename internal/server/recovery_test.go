@@ -12,7 +12,7 @@ import (
 	"github.com/Sanjeever/tunnelquay/internal/client"
 )
 
-func TestRestartRetainsAppliedWhenDesiredCannotBind(t *testing.T) {
+func TestRestartRetainsConfigWhenUpdateCannotBind(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(Options{Listen: "127.0.0.1:0", DataDir: dir})
 	if err != nil {
@@ -46,12 +46,11 @@ func TestRestartRetainsAppliedWhenDesiredCannotBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer occupied.Close()
-	desired := tun.Desired
+	desired := tun
 	_, port, _ := net.SplitHostPort(occupied.Addr().String())
 	fmt.Sscan(port, &desired.PublicPort)
-	failed, err := s.SaveTunnel(desired)
-	if err != nil || failed.Error == "" {
-		t.Fatal("更新应保存并报告应用失败", err)
+	if _, err := s.SaveTunnel(desired); err == nil {
+		t.Fatal("更新占用端口应返回错误")
 	}
 	cancel()
 	<-done
@@ -78,24 +77,24 @@ func TestRestartRetainsAppliedWhenDesiredCannotBind(t *testing.T) {
 	waitFor(t, func() bool {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
-		r := s.running[tun.Desired.ID]
-		return r != nil && r.cfg.PublicPort == tun.Desired.PublicPort
+		r := s.running[tun.ID]
+		return r != nil && r.cfg.PublicPort == tun.PublicPort
 	})
-	conn := dialTunnel(t, tun.Desired.PublicPort)
+	conn := dialTunnel(t, tun.PublicPort)
 	defer conn.Close()
 	b := make([]byte, len("保留"))
 	if _, err = io.ReadFull(conn, b); err != nil || string(b) != "保留" {
 		t.Fatal("重启未保留最近生效配置", err, string(b))
 	}
 	s.mu.RLock()
-	current := *s.tunnels[tun.Desired.ID]
+	current := *s.tunnels[tun.ID]
 	s.mu.RUnlock()
-	if current.Desired.PublicPort != desired.PublicPort || current.Error == "" {
-		t.Fatal("重启丢失期望配置或失败原因")
+	if current.PublicPort != tun.PublicPort || current.Error != "" {
+		t.Fatal("重启未保留原有端口配置")
 	}
 }
 
-func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
+func TestRestartRecoversIdentityPortsAndLatestConfig(t *testing.T) {
 	dir := t.TempDir()
 	s, err := New(Options{Listen: "127.0.0.1:0", DataDir: dir})
 	if err != nil {
@@ -124,8 +123,8 @@ func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
 	<-done
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return !s.devices[c.ID].Online })
 	updated := cfgFor(c.ID, "tcp", next.Addr().String())
-	updated.ID = tun.Desired.ID
-	updated.PublicPort = tun.Desired.PublicPort
+	updated.ID = tun.ID
+	updated.PublicPort = tun.PublicPort
 	if _, err = s.SaveTunnel(updated); err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +156,10 @@ func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
 	waitFor(t, func() bool {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
-		r := s.running[tun.Desired.ID]
+		r := s.running[tun.ID]
 		return r != nil && r.cfg.TargetPort == updated.TargetPort
 	})
-	conn := dialTunnel(t, tun.Desired.PublicPort)
+	conn := dialTunnel(t, tun.PublicPort)
 	b := make([]byte, len("新"))
 	_, err = io.ReadFull(conn, b)
 	conn.Close()
@@ -180,7 +179,7 @@ func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
 	go func() { defer close(done); again.Connect(ctx) }()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return s.devices[c.ID].Online })
 	s.mu.RLock()
-	running := s.running[tun.Desired.ID]
+	running := s.running[tun.ID]
 	s.mu.RUnlock()
 	if running != nil {
 		t.Fatal("重连重新启用了已停用隧道")
@@ -204,7 +203,7 @@ func TestConcurrentPortsAndUDPTimeout(t *testing.T) {
 			if tun.Error != "" {
 				t.Errorf("应用失败：%s", tun.Error)
 			}
-			ports <- tun.Desired.PublicPort
+			ports <- tun.PublicPort
 		})
 	}
 	wg.Wait()
@@ -239,7 +238,7 @@ func TestConcurrentPortsAndUDPTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	address := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: tun.Desired.PublicPort}
+	address := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: tun.PublicPort}
 	external, err := net.DialUDP("udp", nil, address)
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +276,7 @@ func TestConcurrentPortsAndUDPTimeout(t *testing.T) {
 	s.mu.Unlock()
 	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.connections) == 0 })
 	s.mu.RLock()
-	cfg := s.tunnels[tun.Desired.ID].Desired
+	cfg := *s.tunnels[tun.ID]
 	s.mu.RUnlock()
 	cfg.Enabled = false
 	if _, err = s.SaveTunnel(cfg); err != nil {

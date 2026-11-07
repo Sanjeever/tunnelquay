@@ -22,14 +22,9 @@ type Client struct {
 	ID                  string
 	secret, fingerprint string
 	identityKey         ed25519.PrivateKey
-	mu                  sync.Mutex
-	configs             map[string]protocol.Config
-	forwards            map[protocol.Stream]forwardTarget
-	session             *transport.Session
 	wg                  sync.WaitGroup
 	upgradeMu           sync.Mutex
 	installed           chan struct{}
-	upgradeTask         string
 }
 
 func New(opts Options) (*Client, error) {
@@ -44,14 +39,16 @@ func New(opts Options) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Client{Options: opts, ID: protocol.DeviceID(key.Public().(ed25519.PublicKey)), identityKey: key, secret: secret, fingerprint: fp, configs: map[string]protocol.Config{}, forwards: map[protocol.Stream]forwardTarget{}, installed: make(chan struct{})}
-	state, err := c.readUpgrade()
-	if err != nil {
-		return nil, fmt.Errorf("读取升级状态失败：%w", err)
-	}
-	c.upgradeTask = state.ID
-	return c, nil
+	return &Client{
+		Options:     opts,
+		ID:          protocol.DeviceID(key.Public().(ed25519.PublicKey)),
+		identityKey: key,
+		secret:      secret,
+		fingerprint: fp,
+		installed:   make(chan struct{}),
+	}, nil
 }
+
 func (c *Client) Run(ctx context.Context) error {
 	delay := time.Second
 	for {
@@ -82,6 +79,7 @@ func (c *Client) Run(ctx context.Context) error {
 		}
 	}
 }
+
 func (c *Client) Connect(ctx context.Context) error {
 	session, err := transport.Dial(ctx, c.Options.Address, transport.ClientTLS(c.fingerprint))
 	if err != nil {
@@ -99,7 +97,16 @@ func (c *Client) Connect(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	h := protocol.Hello{Secret: c.secret, ID: c.ID, Hostname: hostname, OS: runtime.GOOS, Arch: runtime.GOARCH, Version: buildinfo.Version, Protocols: []int{protocol.Version}, Capabilities: protocol.Capabilities, UpgradeTask: c.upgradeTask}
+	h := protocol.Hello{
+		Secret:       c.secret,
+		ID:           c.ID,
+		Hostname:     hostname,
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		Version:      buildinfo.Version,
+		Protocols:    []int{protocol.Version},
+		Capabilities: protocol.Capabilities,
+	}
 	m, err := c.authenticate(codec, h)
 	if err != nil {
 		return err
@@ -108,10 +115,6 @@ func (c *Client) Connect(ctx context.Context) error {
 		return fmt.Errorf("服务端协商结果无效：%w", err)
 	}
 	stream.SetDeadline(time.Time{})
-	c.mu.Lock()
-	c.session = session
-	c.configs = map[string]protocol.Config{}
-	c.mu.Unlock()
 	slog.Info("设备已接入", "身份", c.ID)
 	sessionCtx, cancel := context.WithCancel(ctx)
 	defer func() {
@@ -142,7 +145,7 @@ func (c *Client) Connect(ctx context.Context) error {
 			}
 			return fmt.Errorf("控制消息接收失败：%w", err)
 		}
-		reply := protocol.Message{Type: "ack", ID: m.ID, Revision: m.Revision}
+		reply := protocol.Message{Type: "ack", ID: m.ID}
 		switch m.Type {
 		case "ping":
 			reply.Type = "pong"
@@ -150,37 +153,6 @@ func (c *Client) Connect(ctx context.Context) error {
 			message := m
 			c.wg.Go(func() { c.upgrade(sessionCtx, session, codec, message) })
 			continue
-		case "prepare":
-			if m.Config == nil {
-				reply.Error = "缺少隧道配置"
-			} else {
-				cfg := *m.Config
-				c.mu.Lock()
-				c.configs[cfg.ID] = cfg
-				c.mu.Unlock()
-			}
-		case "snapshot":
-			c.mu.Lock()
-			next := map[string]protocol.Config{}
-			for _, cfg := range m.Configs {
-				next[cfg.ID] = cfg
-			}
-			c.configs = next
-			c.mu.Unlock()
-		case "stop":
-			if m.Config != nil {
-				c.mu.Lock()
-				for stream, target := range c.forwards {
-					if target.tunnelID == m.Config.ID && target.revision <= m.Config.Revision {
-						target.cancel()
-						transport.Interrupt(stream)
-					}
-				}
-				if cfg, ok := c.configs[m.Config.ID]; ok && cfg.Revision <= m.Config.Revision {
-					delete(c.configs, m.Config.ID)
-				}
-				c.mu.Unlock()
-			}
 		default:
 			reply.Code = "unsupported_message"
 			reply.Error = "不支持的控制消息"

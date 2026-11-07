@@ -10,26 +10,15 @@ import (
 	"time"
 )
 
-const Version = 2
+const Version = 1
 const MaxFrame = 1 << 20
+const MaxPacket = 65507
 const HeartbeatInterval = 10 * time.Second
 const HeartbeatTimeout = 60 * time.Second
 const ControlIdleTimeout = 90 * time.Second
 const ControlRequestTimeout = 10 * time.Second
 
-var Capabilities = []string{"config-v1", "tcp", "udp", "upgrade-v1"}
-
-type Config struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	DeviceID   string `json:"device_id"`
-	Protocol   string `json:"protocol"`
-	Host       string `json:"host"`
-	TargetPort int    `json:"target_port"`
-	PublicPort int    `json:"public_port"`
-	Enabled    bool   `json:"enabled"`
-	Revision   int64  `json:"revision"`
-}
+var Capabilities = []string{"tcp", "udp", "upgrade-v1"}
 
 func NegotiateCapabilities(remote []string) []string {
 	var negotiated []string
@@ -51,7 +40,6 @@ type Hello struct {
 	Version      string   `json:"version"`
 	Protocols    []int    `json:"protocols"`
 	Capabilities []string `json:"capabilities"`
-	UpgradeTask  string   `json:"upgrade_task,omitempty"`
 }
 
 type Message struct {
@@ -64,11 +52,9 @@ type Message struct {
 	Protocol     int             `json:"protocol,omitempty"`
 	Capabilities []string        `json:"capabilities,omitempty"`
 	Hello        *Hello          `json:"hello,omitempty"`
-	Configs      []Config        `json:"configs,omitempty"`
-	Config       *Config         `json:"config,omitempty"`
-	Revision     int64           `json:"revision,omitempty"`
 	Network      string          `json:"network,omitempty"`
 	Target       string          `json:"target,omitempty"`
+	Size         int64           `json:"size,omitempty"`
 	Task         json.RawMessage `json:"task,omitempty"`
 }
 
@@ -105,6 +91,7 @@ func Write(w io.Writer, v any) error {
 	}
 	return nil
 }
+
 func Read(r io.Reader, v any) error {
 	var h [4]byte
 	if _, err := io.ReadFull(r, h[:]); err != nil {
@@ -120,8 +107,33 @@ func Read(r io.Reader, v any) error {
 	}
 	return json.Unmarshal(b, v)
 }
+
+func WritePacket(w io.Writer, b []byte) error {
+	if len(b) > MaxPacket {
+		return errors.New("UDP 数据报过大")
+	}
+	var h [2]byte
+	binary.BigEndian.PutUint16(h[:], uint16(len(b)))
+	if _, err := w.Write(h[:]); err != nil {
+		return err
+	}
+	_, err := w.Write(b)
+	return err
+}
+
+func ReadPacket(r io.Reader) ([]byte, error) {
+	var h [2]byte
+	if _, err := io.ReadFull(r, h[:]); err != nil {
+		return nil, err
+	}
+	b := make([]byte, int(binary.BigEndian.Uint16(h[:])))
+	_, err := io.ReadFull(r, b)
+	return b, err
+}
+
 func (c *Codec) Send(v Message) error      { c.mu.Lock(); defer c.mu.Unlock(); return Write(c.RW, v) }
 func (c *Codec) Receive() (Message, error) { var m Message; err := Read(c.RW, &m); return m, err }
+
 func Negotiate(h Hello) error {
 	found := false
 	for _, v := range h.Protocols {
@@ -130,15 +142,16 @@ func Negotiate(h Hello) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("通信协议不兼容，服务端要求协议 %d，请升级客户端并迁移旧身份", Version)
+		return fmt.Errorf("通信协议不兼容，服务端要求协议 %d，请升级客户端", Version)
 	}
-	for _, required := range []string{"config-v1", "tcp", "udp"} {
+	for _, required := range []string{"tcp", "udp"} {
 		if !Has(h.Capabilities, required) {
 			return fmt.Errorf("客户端缺少必要能力 %s", required)
 		}
 	}
 	return nil
 }
+
 func Has(caps []string, value string) bool {
 	for _, s := range caps {
 		if s == value {
