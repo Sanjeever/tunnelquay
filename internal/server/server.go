@@ -328,7 +328,7 @@ func (s *Server) servePeer(session *transport.Session) {
 			}
 		}
 	}()
-	if codec.Send(protocol.Message{Type: "welcome", Protocol: protocol.Version, Capabilities: protocol.Capabilities}) != nil {
+	if codec.Send(protocol.Message{Type: "welcome", Protocol: protocol.Version, Capabilities: protocol.NegotiateCapabilities(h.Capabilities)}) != nil {
 		return
 	}
 	stream.SetDeadline(time.Time{})

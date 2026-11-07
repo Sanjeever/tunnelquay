@@ -23,6 +23,7 @@ type activeConnection struct {
 	local     net.Conn
 	runtime   *runtimeTunnel
 	udpID     uint64
+	udpMode   string
 	source    *net.UDPAddr
 	publicUDP *net.UDPConn
 	last      time.Time
@@ -56,6 +57,7 @@ func (s *Server) newConnection(r *runtimeTunnel, network, source string, local n
 	device := s.devices[cfg.DeviceID]
 	c := &activeConnection{record: store.Connection{ID: transport.RandomID(), DeviceID: cfg.DeviceID, DeviceName: device.Name, TunnelID: cfg.ID, TunnelName: cfg.Name, Revision: cfg.Revision, Protocol: network, Source: source, Target: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.TargetPort)), Started: time.Now().UTC(), Result: "active"}, local: local, runtime: r, source: addr, last: time.Now(), done: make(chan struct{})}
 	if network == "udp" {
+		c.udpMode = cfg.UDPMode
 		if len(r.sessions) >= 256 {
 			return nil
 		}
@@ -132,7 +134,7 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 	default:
 	}
 	stream.SetDeadline(time.Now().Add(10 * time.Second))
-	m := protocol.Message{Type: "forward", ID: strconv.FormatUint(c.udpID, 10), Network: network, Target: target, Config: &protocol.Config{ID: c.record.TunnelID, Revision: c.record.Revision}}
+	m := protocol.Message{Type: "forward", ID: strconv.FormatUint(c.udpID, 10), Network: network, Target: target, Config: &protocol.Config{ID: c.record.TunnelID, Revision: c.record.Revision, UDPMode: c.udpMode}}
 	if err = protocol.Write(stream, m); err != nil {
 		transport.Abort(stream)
 		return nil, err
@@ -145,6 +147,10 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 	if reply.Error != "" {
 		transport.Abort(stream)
 		return nil, errors.New(reply.Error)
+	}
+	if network == "udp" && c.udpMode == protocol.UDPModeStream && (reply.Type != "ready" || reply.Config == nil || reply.Config.UDPMode != protocol.UDPModeStream) {
+		transport.Abort(stream)
+		return nil, errors.New("客户端未确认可靠 UDP 承载")
 	}
 	stream.SetDeadline(time.Time{})
 	return stream, nil
@@ -292,6 +298,7 @@ func readPacket(r io.Reader) ([]byte, error) {
 	return b, err
 }
 func (s *Server) forwardUDP(c *activeConnection, p *peer) {
+	useDatagrams := p.session.QUIC != nil && c.udpMode != protocol.UDPModeStream
 	stream, err := s.openForward(c, p)
 	if err != nil {
 		s.finish(c, "failed", "目标连接失败："+err.Error())
@@ -301,7 +308,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 	readDone := make(chan struct{})
 	go func() {
 		defer close(readDone)
-		if p.session.QUIC != nil {
+		if useDatagrams {
 			io.Copy(io.Discard, stream)
 			c.close()
 			return
@@ -319,7 +326,7 @@ func (s *Server) forwardUDP(c *activeConnection, p *peer) {
 		select {
 		case b := <-c.packets:
 			s.udpQueuedBytes.Add(-int64(len(b)))
-			if p.session.QUIC != nil {
+			if useDatagrams {
 				data := make([]byte, 8+len(b))
 				binary.BigEndian.PutUint64(data, c.udpID)
 				copy(data[8:], b)
@@ -379,7 +386,7 @@ func (s *Server) receiveUDP(p *peer) {
 		id := binary.BigEndian.Uint64(b)
 		s.mu.RLock()
 		c := s.udpConnections[id]
-		valid := c != nil && c.record.DeviceID == p.device.ID
+		valid := c != nil && c.record.DeviceID == p.device.ID && c.udpMode != protocol.UDPModeStream
 		s.mu.RUnlock()
 		if valid {
 			s.deliverUDP(c, b[8:])

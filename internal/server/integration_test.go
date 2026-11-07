@@ -3,12 +3,14 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -244,15 +246,22 @@ func TestTransportsTCPUDPAndHistory(t *testing.T) {
 					t.Fatal(e)
 				}
 				defer conn.Close()
-				conn.SetDeadline(time.Now().Add(3 * time.Second))
-				data := bytes.Repeat([]byte{byte(i + 1)}, 65507)
-				if _, e = conn.Write(data); e != nil {
-					t.Fatal(e)
-				}
-				b := make([]byte, 65535)
-				n, e := conn.Read(b)
-				if e != nil || !bytes.Equal(data, b[:n]) {
-					t.Fatalf("UDP 来源 %d，大数据报失败：%v，%d", i, e, n)
+				for _, size := range []int{8192, 65507} {
+					t.Run(fmt.Sprintf("source-%d/%d", i, size), func(t *testing.T) {
+						conn.SetDeadline(time.Now().Add(3 * time.Second))
+						data := bytes.Repeat([]byte{byte(i + 1)}, size)
+						if _, e = conn.Write(data); e != nil {
+							if size == 65507 && errors.Is(e, syscall.EMSGSIZE) {
+								t.Skipf("本机系统拒绝发送最大 UDP 数据报：%v", e)
+							}
+							t.Fatal(e)
+						}
+						b := make([]byte, 65535)
+						n, e := conn.Read(b)
+						if e != nil || !bytes.Equal(data, b[:n]) {
+							t.Fatalf("UDP 来源 %d，大数据报失败：%v，%d", i, e, n)
+						}
+					})
 				}
 			}
 			ut.Desired.Enabled = false
@@ -310,7 +319,7 @@ func TestConfigSwitchRollbackDisable(t *testing.T) {
 	if _, err = io.ReadFull(old, one); err != nil || string(one) != "x" {
 		t.Fatal("旧连接未保留", err)
 	}
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	occupied, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}

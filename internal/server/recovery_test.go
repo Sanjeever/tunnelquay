@@ -41,7 +41,7 @@ func TestRestartRetainsAppliedWhenDesiredCannotBind(t *testing.T) {
 	if err != nil || tun.Error != "" {
 		t.Fatal(err, tun.Error)
 	}
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	occupied, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		t.Fatal(err)
 	}

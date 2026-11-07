@@ -16,19 +16,43 @@ const HeartbeatInterval = 10 * time.Second
 const HeartbeatTimeout = 60 * time.Second
 const ControlIdleTimeout = 90 * time.Second
 const ControlRequestTimeout = 10 * time.Second
+const CapabilityUDPStream = "udp-stream-v1"
+const UDPModeDatagram = "datagram"
+const UDPModeStream = "stream"
 
-var Capabilities = []string{"config-v1", "tcp", "udp", "upgrade-v1"}
+var Capabilities = []string{"config-v1", "tcp", "udp", "upgrade-v1", CapabilityUDPStream}
 
 type Config struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	DeviceID   string `json:"device_id"`
 	Protocol   string `json:"protocol"`
+	UDPMode    string `json:"udp_mode,omitempty"`
 	Host       string `json:"host"`
 	TargetPort int    `json:"target_port"`
 	PublicPort int    `json:"public_port"`
 	Enabled    bool   `json:"enabled"`
 	Revision   int64  `json:"revision"`
+}
+
+func (c Config) ValidateUDPMode(capabilities []string) error {
+	if c.UDPMode != "" && c.UDPMode != UDPModeDatagram && c.UDPMode != UDPModeStream {
+		return errors.New("UDP 承载必须为 datagram 或 stream")
+	}
+	if c.Protocol != "tcp" && c.UDPMode == UDPModeStream && !Has(capabilities, CapabilityUDPStream) {
+		return errors.New("对端未协商可靠 UDP 承载能力（udp-stream-v1）")
+	}
+	return nil
+}
+
+func NegotiateCapabilities(remote []string) []string {
+	var negotiated []string
+	for _, capability := range Capabilities {
+		if Has(remote, capability) {
+			negotiated = append(negotiated, capability)
+		}
+	}
+	return negotiated
 }
 
 type Hello struct {

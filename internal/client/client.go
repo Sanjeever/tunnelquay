@@ -23,6 +23,7 @@ type Client struct {
 	secret, fingerprint string
 	mu                  sync.Mutex
 	configs             map[string]protocol.Config
+	serverCapabilities  []string
 	udp                 map[uint64]*udpTarget
 	forwards            map[protocol.Stream]forwardTarget
 	session             *transport.Session
@@ -136,6 +137,7 @@ func (c *Client) Connect(ctx context.Context) error {
 	stream.SetDeadline(time.Time{})
 	c.mu.Lock()
 	c.session = session
+	c.serverCapabilities = protocol.NegotiateCapabilities(m.Capabilities)
 	c.configs = map[string]protocol.Config{}
 	c.mu.Unlock()
 	slog.Info("设备已接入", "身份", c.ID, "传输", session.Network)
@@ -190,16 +192,28 @@ func (c *Client) Connect(ctx context.Context) error {
 			} else {
 				cfg := *m.Config
 				c.mu.Lock()
-				c.configs[cfg.ID] = cfg
+				if e := cfg.ValidateUDPMode(c.serverCapabilities); e != nil {
+					reply.Code = "unsupported_udp_mode"
+					reply.Error = e.Error()
+				} else {
+					c.configs[cfg.ID] = cfg
+				}
 				c.mu.Unlock()
 			}
 		case "snapshot":
 			c.mu.Lock()
 			next := map[string]protocol.Config{}
 			for _, cfg := range m.Configs {
+				if e := cfg.ValidateUDPMode(c.serverCapabilities); e != nil {
+					reply.Code = "unsupported_udp_mode"
+					reply.Error = e.Error()
+					break
+				}
 				next[cfg.ID] = cfg
 			}
-			c.configs = next
+			if reply.Error == "" {
+				c.configs = next
+			}
 			c.mu.Unlock()
 		case "stop":
 			if m.Config != nil {

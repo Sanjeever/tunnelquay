@@ -67,6 +67,11 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		protocol.Write(stream, protocol.Message{Error: "隧道配置已撤销"})
 		return
 	}
+	if err := m.Config.ValidateUDPMode(c.serverCapabilities); err != nil {
+		c.mu.Unlock()
+		protocol.Write(stream, protocol.Message{Error: err.Error()})
+		return
+	}
 	c.forwards[stream] = forwardTarget{m.Config.ID, m.Config.Revision, cancel}
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.forwards, stream); c.mu.Unlock() }()
@@ -88,7 +93,8 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		}
 	}()
 	var id uint64
-	if m.Network == "udp" && session.QUIC != nil {
+	useDatagrams := session.QUIC != nil && m.Config.UDPMode != protocol.UDPModeStream
+	if m.Network == "udp" && useDatagrams {
 		id, err = strconv.ParseUint(m.ID, 10, 64)
 		if err != nil {
 			return
@@ -103,7 +109,7 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		c.mu.Unlock()
 		defer func() { c.mu.Lock(); delete(c.udp, id); c.mu.Unlock() }()
 	}
-	if protocol.Write(stream, protocol.Message{Type: "ready"}) != nil {
+	if protocol.Write(stream, protocol.Message{Type: "ready", Config: m.Config}) != nil {
 		return
 	}
 	stream.SetDeadline(time.Time{})
@@ -136,7 +142,7 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 				transport.Abort(stream)
 				return
 			}
-			if session.QUIC != nil {
+			if useDatagrams {
 				packet := make([]byte, 8+n)
 				binary.BigEndian.PutUint64(packet, id)
 				copy(packet[8:], b[:n])
@@ -150,7 +156,7 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 			}
 		}
 	}()
-	if session.QUIC != nil {
+	if useDatagrams {
 		io.Copy(io.Discard, stream)
 	} else {
 		for {
