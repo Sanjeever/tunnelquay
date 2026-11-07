@@ -9,7 +9,7 @@ import (
 
 func TestUDPSessionsRetainTargetAndOldPublicPort(t *testing.T) {
 	s := testServer(t)
-	id, _ := testClient(t, s, "quic")
+	id, _ := testClient(t, s)
 	target := func(prefix string) *net.UDPConn {
 		u, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 		if err != nil {

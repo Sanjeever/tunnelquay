@@ -99,7 +99,7 @@ func TestActualClientReplacementExitAndRestart(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, port, _ := strings.Cut(s.Addr(), ":")
-	args := []string{"-address", "127.0.0.1", "-port", port, "-credential", s.Identity.Credential(), "-transport", "quic", "-data-dir", filepath.Join(dir, "identity")}
+	args := []string{"-address", "127.0.0.1", "-port", port, "-credential", s.Identity.Credential(), "-data-dir", filepath.Join(dir, "identity")}
 	cmd := exec.CommandContext(ctx, oldPath, args...)
 	cmd.Stderr = os.Stderr
 	if err = cmd.Start(); err != nil {

@@ -28,7 +28,6 @@ func run() error {
 	address := flag.String("address", "", "服务端直连 IP 或域名")
 	port := flag.Int("port", 0, "服务端接入端口")
 	credential := flag.String("credential", "", "包含登记秘密和服务端指纹的接入凭据")
-	transport := flag.String("transport", "quic", "接入传输 quic 或 tcp")
 	dir := flag.String("data-dir", "", "设备私钥与升级状态目录，默认用户配置目录下的 tunnelquay")
 	version := flag.Bool("version", false, "显示版本")
 	flag.Parse()
@@ -47,7 +46,7 @@ func run() error {
 		}
 		*dir = filepath.Join(config, "tunnelquay")
 	}
-	c, err := client.New(client.Options{Address: net.JoinHostPort(*address, strconv.Itoa(*port)), Credential: *credential, Transport: *transport, DataDir: *dir})
+	c, err := client.New(client.Options{Address: net.JoinHostPort(*address, strconv.Itoa(*port)), Credential: *credential, DataDir: *dir})
 	if err != nil {
 		return err
 	}

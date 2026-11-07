@@ -29,7 +29,7 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 		}
 		size = n
 	}
-	for _, network := range []string{"tcp", "quic"} {
+	for _, network := range []string{"tcp"} {
 		t.Run(network, func(t *testing.T) {
 			s, err := New(Options{Listen: "127.0.0.1:7000", DataDir: t.TempDir()})
 			if err != nil {
@@ -56,7 +56,7 @@ func TestSlowLinkTransferAndControl(t *testing.T) {
 					go func() { defer conn.Close(); io.Copy(conn, conn) }()
 				}
 			}()
-			c, err := client.New(client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), Transport: network, DataDir: t.TempDir()})
+			c, err := client.New(client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), DataDir: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}

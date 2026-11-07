@@ -21,7 +21,7 @@ func main() {
 }
 func run() error {
 	buildinfo.ConfigureHelp("tunnelquay-server")
-	listen := flag.String("listen", ":7000", "HTTP、TLS 和 QUIC 共用的监听地址和端口")
+	listen := flag.String("listen", ":7000", "管理 HTTP 与客户端 TLS 共用的监听地址和端口")
 	dir := flag.String("data-dir", "data/server", "数据目录，保存数据库与服务端身份")
 	version := flag.Bool("version", false, "显示版本")
 	flag.Parse()

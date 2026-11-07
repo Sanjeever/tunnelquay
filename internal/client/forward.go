@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"strconv"
 	"sync"
 	"time"
 
@@ -14,10 +13,6 @@ import (
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 )
 
-type udpTarget struct {
-	conn    net.Conn
-	session *transport.Session
-}
 type forwardTarget struct {
 	tunnelID string
 	revision int64
@@ -67,11 +62,6 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		protocol.Write(stream, protocol.Message{Error: "隧道配置已撤销"})
 		return
 	}
-	if err := m.Config.ValidateUDPMode(c.serverCapabilities); err != nil {
-		c.mu.Unlock()
-		protocol.Write(stream, protocol.Message{Error: err.Error()})
-		return
-	}
 	c.forwards[stream] = forwardTarget{m.Config.ID, m.Config.Revision, cancel}
 	c.mu.Unlock()
 	defer func() { c.mu.Lock(); delete(c.forwards, stream); c.mu.Unlock() }()
@@ -92,23 +82,6 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 		case <-done:
 		}
 	}()
-	var id uint64
-	useDatagrams := session.QUIC != nil && m.Config.UDPMode != protocol.UDPModeStream
-	if m.Network == "udp" && useDatagrams {
-		id, err = strconv.ParseUint(m.ID, 10, 64)
-		if err != nil {
-			return
-		}
-		c.mu.Lock()
-		if len(c.udp) >= 1024 {
-			c.mu.Unlock()
-			protocol.Write(stream, protocol.Message{Error: "UDP 会话达到上限"})
-			return
-		}
-		c.udp[id] = &udpTarget{target, session}
-		c.mu.Unlock()
-		defer func() { c.mu.Lock(); delete(c.udp, id); c.mu.Unlock() }()
-	}
 	if protocol.Write(stream, protocol.Message{Type: "ready", Config: m.Config}) != nil {
 		return
 	}
@@ -142,55 +115,24 @@ func (c *Client) forward(ctx context.Context, session *transport.Session, stream
 				transport.Abort(stream)
 				return
 			}
-			if useDatagrams {
-				packet := make([]byte, 8+n)
-				binary.BigEndian.PutUint64(packet, id)
-				copy(packet[8:], b[:n])
-				e = session.SendDatagram(packet)
-			} else {
-				e = writePacket(stream, b[:n])
-			}
-			if e != nil {
+			if e = writePacket(stream, b[:n]); e != nil {
 				transport.Abort(stream)
 				return
 			}
 		}
 	}()
-	if useDatagrams {
-		io.Copy(io.Discard, stream)
-	} else {
-		for {
-			b, e := readPacket(stream)
-			if e != nil {
-				break
-			}
-			target.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if _, e = target.Write(b); e != nil {
-				break
-			}
+	for {
+		b, e := readPacket(stream)
+		if e != nil {
+			break
+		}
+		target.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if _, e = target.Write(b); e != nil {
+			break
 		}
 	}
 	target.Close()
 	<-readDone
-}
-func (c *Client) receiveUDP(ctx context.Context, session *transport.Session) {
-	for {
-		b, err := session.ReceiveDatagram(ctx)
-		if err != nil {
-			return
-		}
-		if len(b) < 8 {
-			continue
-		}
-		id := binary.BigEndian.Uint64(b)
-		c.mu.Lock()
-		u := c.udp[id]
-		c.mu.Unlock()
-		if u != nil && u.session == session {
-			u.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			u.conn.Write(b[8:])
-		}
-	}
 }
 func writePacket(w io.Writer, b []byte) error {
 	if len(b) > 65507 {

@@ -27,7 +27,7 @@ func TestRestartRetainsAppliedWhenDesiredCannotBind(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := tcpTarget(t, "保留")
-	opts := client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), Transport: "tcp", DataDir: t.TempDir()}
+	opts := client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), DataDir: t.TempDir()}
 	c, err := client.New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
 	target := tcpTarget(t, "旧")
 	next := tcpTarget(t, "新")
 	clientDir := t.TempDir()
-	opts := client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), Transport: "quic", DataDir: clientDir}
+	opts := client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), DataDir: clientDir}
 	c, err := client.New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -189,7 +189,7 @@ func TestRestartRecoversIdentityPortsAndLatestDesired(t *testing.T) {
 
 func TestConcurrentPortsAndUDPTimeout(t *testing.T) {
 	s := testServer(t)
-	id, _ := testClient(t, s, "tcp")
+	id, _ := testClient(t, s)
 	target := tcpTarget(t, "并发")
 	var wg sync.WaitGroup
 	ports := make(chan int, 8)
@@ -275,7 +275,7 @@ func TestConcurrentPortsAndUDPTimeout(t *testing.T) {
 		}
 	}
 	s.mu.Unlock()
-	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.udpConnections) == 0 })
+	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.connections) == 0 })
 	s.mu.RLock()
 	cfg := s.tunnels[tun.Desired.ID].Desired
 	s.mu.RUnlock()

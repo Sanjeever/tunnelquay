@@ -25,7 +25,7 @@ func TestDeviceKeyPersistsAndLegacyIDCannotSelectIdentity(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(dir, "device-id"), []byte(legacy), 0600); err != nil {
 		t.Fatal(err)
 	}
-	opts := Options{Address: "127.0.0.1:1", Credential: identity.Credential(), Transport: "tcp", DataDir: dir}
+	opts := Options{Address: "127.0.0.1:1", Credential: identity.Credential(), DataDir: dir}
 	first, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,7 @@ func TestServerCannotSkipDeviceKeyAuthentication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	c, err := New(Options{Address: listener.Addr().String(), Credential: identity.Credential(), Transport: "tcp", DataDir: t.TempDir()})
+	c, err := New(Options{Address: listener.Addr().String(), Credential: identity.Credential(), DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

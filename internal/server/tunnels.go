@@ -32,9 +32,6 @@ func (r *runtimeTunnel) close() {
 }
 func protocolsOverlap(a, b string) bool { return a == b || a == "both" || b == "both" }
 func validateConfig(c protocol.Config) error {
-	if err := c.ValidateUDPMode(protocol.Capabilities); err != nil {
-		return err
-	}
 	if strings.TrimSpace(c.Name) == "" || len(c.Name) > 128 {
 		return errors.New("隧道名称须为 1 至 128 字符")
 	}
@@ -101,9 +98,6 @@ func (s *Server) portFreeLocked(cfg protocol.Config) bool {
 func (s *Server) SaveTunnel(cfg protocol.Config) (store.Tunnel, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
-	if cfg.UDPMode == "" {
-		cfg.UDPMode = protocol.UDPModeDatagram
-	}
 	if err := validateConfig(cfg); err != nil {
 		return store.Tunnel{}, err
 	}
@@ -205,12 +199,12 @@ func (s *Server) apply(t *store.Tunnel, p *peer, prepared *runtimeTunnel) {
 	cfg := t.Desired
 	old := s.running[cfg.ID]
 	reuse := old != nil && old.cfg.PublicPort == cfg.PublicPort
-	err := cfg.ValidateUDPMode(protocol.NegotiateCapabilities(p.device.Capabilities))
+	var err error
 	if reuse && prepared != nil {
 		prepared.close()
 		prepared = nil
 	}
-	if err == nil && prepared == nil {
+	if prepared == nil {
 		var shared *runtimeTunnel
 		if reuse {
 			shared = old
@@ -319,11 +313,7 @@ func (s *Server) reconcileDevice(id string) {
 		}
 		s.mu.RUnlock()
 		if fallback {
-			var r *runtimeTunnel
-			err := applied.ValidateUDPMode(protocol.NegotiateCapabilities(p.device.Capabilities))
-			if err == nil {
-				r, err = bind(applied)
-			}
+			r, err := bind(applied)
 			if err == nil {
 				_, err = s.request(p, protocol.Message{Type: "prepare", Config: &applied}, protocol.ControlRequestTimeout)
 			}

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 
 	"github.com/Sanjeever/tunnelquay/internal/protocol"
-	quic "github.com/quic-go/quic-go"
 )
 
 type accessError struct{ code, reason string }
@@ -25,13 +23,6 @@ func (e *accessError) Error() string {
 func receiveIdentityMessage(codec *protocol.Codec) (protocol.Message, error) {
 	message, err := codec.Receive()
 	if err != nil {
-		var application *quic.ApplicationError
-		if errors.As(err, &application) {
-			var rejection protocol.Message
-			if json.Unmarshal([]byte(application.ErrorMessage), &rejection) == nil && rejection.Type == "error" && rejection.Code != "" {
-				return protocol.Message{}, &accessError{rejection.Code, rejection.Error}
-			}
-		}
 		return protocol.Message{}, err
 	}
 	if message.Type == "error" {

@@ -33,7 +33,7 @@ func waitFor(t *testing.T, fn func() bool) {
 }
 func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	s := testServer(t)
-	id, cancel := testClient(t, s, "tcp")
+	id, cancel := testClient(t, s)
 	key := testDeviceKey(t)
 	wrong := testDeviceHello(key, "wrong", protocol.Capabilities)
 	incompatible := testDeviceHello(key, s.Identity.Secret, protocol.Capabilities)
@@ -50,7 +50,7 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 		{"不能凭ID认领", claimed, "invalid_identity"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			session, err := transport.Dial(context.Background(), s.Addr(), "tcp", transport.ClientTLS(s.Identity.Fingerprint))
+			session, err := transport.Dial(context.Background(), s.Addr(), transport.ClientTLS(s.Identity.Fingerprint))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,23 +102,19 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 	probe.Close()
 }
 
-func TestClientReportsAuthenticationErrorOnBothTransports(t *testing.T) {
+func TestClientReportsAuthenticationError(t *testing.T) {
 	s := testServer(t)
 	bad := *s.Identity
 	bad.Secret = strings.Repeat("0", 48)
-	for _, network := range []string{"tcp", "quic"} {
-		t.Run(network, func(t *testing.T) {
-			c, err := client.New(client.Options{Address: s.Addr(), Credential: bad.Credential(), Transport: network, DataDir: t.TempDir()})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			defer cancel()
-			err = c.Connect(ctx)
-			if err == nil || !strings.Contains(err.Error(), "接入凭据错误") {
-				t.Fatalf("认证错误未提供原因：%v", err)
-			}
-		})
+	c, err := client.New(client.Options{Address: s.Addr(), Credential: bad.Credential(), DataDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err = c.Connect(ctx)
+	if err == nil || !strings.Contains(err.Error(), "接入凭据错误") {
+		t.Fatalf("认证错误未提供原因：%v", err)
 	}
 }
 func testServer(t *testing.T) *Server {
@@ -137,9 +133,9 @@ func testServer(t *testing.T) *Server {
 	})
 	return s
 }
-func testClient(t *testing.T, s *Server, network string) (string, context.CancelFunc) {
+func testClient(t *testing.T, s *Server) (string, context.CancelFunc) {
 	t.Helper()
-	c, err := client.New(client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), Transport: network, DataDir: t.TempDir()})
+	c, err := client.New(client.Options{Address: s.Addr(), Credential: s.Identity.Credential(), DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,93 +200,89 @@ func dialTunnel(t *testing.T, port int) *net.TCPConn {
 	return c.(*net.TCPConn)
 }
 func TestTransportsTCPUDPAndHistory(t *testing.T) {
-	for _, network := range []string{"tcp", "quic"} {
-		t.Run(network, func(t *testing.T) {
-			s := testServer(t)
-			id, _ := testClient(t, s, network)
-			target := tcpTarget(t, "")
-			tunnel, err := s.SaveTunnel(cfgFor(id, "tcp", target.Addr().String()))
-			if err != nil || tunnel.Error != "" {
-				t.Fatalf("隧道：%v %s", err, tunnel.Error)
+	s := testServer(t)
+	id, _ := testClient(t, s)
+	target := tcpTarget(t, "")
+	tunnel, err := s.SaveTunnel(cfgFor(id, "tcp", target.Addr().String()))
+	if err != nil || tunnel.Error != "" {
+		t.Fatalf("隧道：%v %s", err, tunnel.Error)
+	}
+	c := dialTunnel(t, tunnel.Desired.PublicPort)
+	payload := bytes.Repeat([]byte("双向传输"), 10000)
+	if _, err = c.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	c.CloseWrite()
+	got, err := io.ReadAll(c)
+	c.Close()
+	if err != nil || !bytes.Equal(got, append([]byte("回复:"), payload...)) {
+		s.historyMu.Lock()
+		t.Logf("已结束连接：%+v", s.finished)
+		s.historyMu.Unlock()
+		t.Fatalf("半关闭回包错误：%v 长度 %d", err, len(got))
+	}
+	u, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.Close()
+	go func() {
+		b := make([]byte, 65535)
+		for {
+			n, a, e := u.ReadFromUDP(b)
+			if e != nil {
+				return
 			}
-			c := dialTunnel(t, tunnel.Desired.PublicPort)
-			payload := bytes.Repeat([]byte("双向传输"), 10000)
-			if _, err = c.Write(payload); err != nil {
-				t.Fatal(err)
-			}
-			c.CloseWrite()
-			got, err := io.ReadAll(c)
-			c.Close()
-			if err != nil || !bytes.Equal(got, append([]byte("回复:"), payload...)) {
-				s.historyMu.Lock()
-				t.Logf("已结束连接：%+v", s.finished)
-				s.historyMu.Unlock()
-				t.Fatalf("半关闭回包错误：%v 长度 %d", err, len(got))
-			}
-			u, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer u.Close()
-			go func() {
-				b := make([]byte, 65535)
-				for {
-					n, a, e := u.ReadFromUDP(b)
-					if e != nil {
-						return
+			u.WriteToUDP(b[:n], a)
+		}
+	}()
+	ut, err := s.SaveTunnel(cfgFor(id, "udp", u.LocalAddr().String()))
+	if err != nil || ut.Error != "" {
+		t.Fatalf("UDP 隧道：%v %s", err, ut.Error)
+	}
+	for i := 0; i < 3; i++ {
+		conn, e := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", ut.Desired.PublicPort))
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer conn.Close()
+		for _, size := range []int{8192, 65507} {
+			t.Run(fmt.Sprintf("source-%d/%d", i, size), func(t *testing.T) {
+				conn.SetDeadline(time.Now().Add(3 * time.Second))
+				data := bytes.Repeat([]byte{byte(i + 1)}, size)
+				if _, e = conn.Write(data); e != nil {
+					if size == 65507 && errors.Is(e, syscall.EMSGSIZE) {
+						t.Skipf("本机系统拒绝发送最大 UDP 数据报：%v", e)
 					}
-					u.WriteToUDP(b[:n], a)
-				}
-			}()
-			ut, err := s.SaveTunnel(cfgFor(id, "udp", u.LocalAddr().String()))
-			if err != nil || ut.Error != "" {
-				t.Fatalf("UDP 隧道：%v %s", err, ut.Error)
-			}
-			for i := 0; i < 3; i++ {
-				conn, e := net.Dial("udp", fmt.Sprintf("127.0.0.1:%d", ut.Desired.PublicPort))
-				if e != nil {
 					t.Fatal(e)
 				}
-				defer conn.Close()
-				for _, size := range []int{8192, 65507} {
-					t.Run(fmt.Sprintf("source-%d/%d", i, size), func(t *testing.T) {
-						conn.SetDeadline(time.Now().Add(3 * time.Second))
-						data := bytes.Repeat([]byte{byte(i + 1)}, size)
-						if _, e = conn.Write(data); e != nil {
-							if size == 65507 && errors.Is(e, syscall.EMSGSIZE) {
-								t.Skipf("本机系统拒绝发送最大 UDP 数据报：%v", e)
-							}
-							t.Fatal(e)
-						}
-						b := make([]byte, 65535)
-						n, e := conn.Read(b)
-						if e != nil || !bytes.Equal(data, b[:n]) {
-							t.Fatalf("UDP 来源 %d，大数据报失败：%v，%d", i, e, n)
-						}
-					})
+				b := make([]byte, 65535)
+				n, e := conn.Read(b)
+				if e != nil || !bytes.Equal(data, b[:n]) {
+					t.Fatalf("UDP 来源 %d，大数据报失败：%v，%d", i, e, n)
 				}
-			}
-			ut.Desired.Enabled = false
-			if _, err = s.SaveTunnel(ut.Desired); err != nil {
-				t.Fatal(err)
-			}
-			waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.connections) == 0 })
-			if err = s.DeleteTunnel(tunnel.Desired.ID); err != nil {
-				t.Fatal(err)
-			}
-			if err = s.flushHistory(); err != nil {
-				t.Fatal(err)
-			}
-			items, total, err := s.Store.History(store.Filter{Page: 1, Limit: 100})
-			if err != nil || total != 4 {
-				t.Fatalf("历史 %d：%v %#v", total, err, items)
-			}
-		})
+			})
+		}
+	}
+	ut.Desired.Enabled = false
+	if _, err = s.SaveTunnel(ut.Desired); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { s.mu.RLock(); defer s.mu.RUnlock(); return len(s.connections) == 0 })
+	if err = s.DeleteTunnel(tunnel.Desired.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.flushHistory(); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := s.Store.History(store.Filter{Page: 1, Limit: 100})
+	if err != nil || total != 4 {
+		t.Fatalf("历史 %d：%v %#v", total, err, items)
 	}
 }
 func TestConfigSwitchRollbackDisable(t *testing.T) {
 	s := testServer(t)
-	id, _ := testClient(t, s, "tcp")
+	id, _ := testClient(t, s)
 	a := tcpTarget(t, "A")
 	b := tcpTarget(t, "B")
 	tun, err := s.SaveTunnel(cfgFor(id, "tcp", a.Addr().String()))

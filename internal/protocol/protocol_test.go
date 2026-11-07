@@ -3,8 +3,6 @@ package protocol
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
-	"slices"
 	"testing"
 )
 
@@ -34,32 +32,5 @@ func TestNegotiationAndOptionalFields(t *testing.T) {
 	binary.Write(&b, binary.BigEndian, uint32(MaxFrame+1))
 	if Read(&b, &m) == nil {
 		t.Fatal("应拒绝过大消息")
-	}
-}
-
-func TestUDPModeCapabilityNegotiation(t *testing.T) {
-	legacy := []string{"config-v1", "tcp", "udp", "upgrade-v1", "future"}
-	negotiated := NegotiateCapabilities(legacy)
-	if Has(negotiated, CapabilityUDPStream) || Has(negotiated, "future") || Negotiate(Hello{Protocols: []int{Version}, Capabilities: negotiated}) != nil {
-		t.Fatal("旧能力协商失败", negotiated)
-	}
-	if !slices.Equal(NegotiateCapabilities(Capabilities), Capabilities) {
-		t.Fatal("新能力未协商")
-	}
-	var old Config
-	if err := json.Unmarshal([]byte(`{"protocol":"udp"}`), &old); err != nil || old.ValidateUDPMode(legacy) != nil {
-		t.Fatal("旧配置默认承载不兼容", err)
-	}
-	for _, mode := range []string{"", UDPModeDatagram} {
-		if err := (Config{Protocol: "udp", UDPMode: mode}).ValidateUDPMode(negotiated); err != nil {
-			t.Fatal(err)
-		}
-	}
-	stream := Config{Protocol: "both", UDPMode: UDPModeStream}
-	if stream.ValidateUDPMode(negotiated) == nil || stream.ValidateUDPMode(Capabilities) != nil {
-		t.Fatal("可靠承载未按能力校验")
-	}
-	if (Config{UDPMode: "unknown"}).ValidateUDPMode(Capabilities) == nil {
-		t.Fatal("接受了未知承载")
 	}
 }

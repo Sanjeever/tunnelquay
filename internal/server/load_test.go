@@ -20,11 +20,7 @@ func TestRepresentativeLoad(t *testing.T) {
 	s := testServer(t)
 	ids := make([]string, 5)
 	for i := range ids {
-		network := "quic"
-		if i%2 == 0 {
-			network = "tcp"
-		}
-		ids[i], _ = testClient(t, s, network)
+		ids[i], _ = testClient(t, s)
 	}
 	target, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
