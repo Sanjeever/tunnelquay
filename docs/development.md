@@ -16,44 +16,37 @@ Go 版本要求见 [go.mod](../go.mod)，前端依赖见 [web/package.json](../w
 
 服务端执行 `./bin/tunnelquay-server -listen :7000 -data-dir data/server`。首次启动在终端显示临时管理密码，首次登录必须改密；每次启动都会显示客户端接入凭据。开放接入和业务映射端口由用户自行配置防火墙。
 
-客户端命令见 [README 快速开始](../README.md#从源码开始)。服务端和客户端的全部参数、默认值分别见 [服务端入口](../cmd/tunnelquay-server/main.go) 与 [客户端入口](../cmd/tunnelquay-client/main.go)，也可执行程序的 `-h` 查看。客户端私钥默认保存在用户配置目录下 `tunnelquay/device-key.pem`，可用 `-data-dir` 指定；多实例使用不同身份目录。旧 `device-id` 保留供迁移核对，不参与密钥认证。进程收到中断或 SIGTERM 后清理退出。Windows 程序路径使用 `.\bin\程序名.exe`。
+客户端命令见 [README 快速开始](../README.md#从源码开始)。服务端和客户端的全部参数、默认值分别见 [服务端入口](../cmd/tunnelquay-server/main.go) 与 [客户端入口](../cmd/tunnelquay-client/main.go)，也可执行程序的 `-h` 查看。客户端私钥默认保存在用户配置目录下 `tunnelquay/device-key.pem`，可用 `-data-dir` 指定；多实例使用不同身份目录。进程收到中断或 SIGTERM 后清理退出。Windows 程序路径使用 `.\bin\程序名.exe`。
 
 Web 反向代理转发 HTTP 到 7000，保留 Host，并在 HTTPS 入口设置 `X-Forwarded-Proto: https`。客户端直连公网 IP 或域名和接入端口，不经过 HTTP 反向代理。在设置中单独保存接入地址，生成命令不使用浏览器域名推断。
 
-备份时先停止服务端，再复制完整数据目录（包含 SQLite、`identity.json` 与发行包缓存）；身份文件丢失会使现有凭据失效。恢复时使用同一目录。客户端升级和重启保留完整身份目录，包含 `device-key.pem` 私钥及 `upgrade.json` 升级确认状态；私钥备份应放在受保护的位置。
+备份时先停止服务端，再复制完整数据目录（包含 SQLite、`identity.json` 与发行包缓存）；身份文件丢失会使现有凭据失效。恢复时使用同一目录。客户端升级和重启保留完整身份目录（包含 `device-key.pem` 私钥）；私钥备份应放在受保护的位置。
 
-## 身份迁移与撤销
+## 身份与撤销
 
-当前安全握手使用通信协议 2，数据库格式标记为 2，旧协议 1 不再接入。数据库升级保留旧设备和隧道，但不会自动给旧 ID 绑定公钥；旧服务端不能打开升级后的数据库。
-
-从旧版本升级时按以下步骤操作。
-
-1. 停止旧服务端和客户端，备份两端完整数据目录，保留旧程序供核查。
-2. 同时替换服务端与客户端程序，沿用原数据目录和接入命令。服务端保留证书、登记秘密与管理密码；新客户端生成独立私钥，以新身份登记。该迁移需要手工更新程序，不能依赖旧协议接入新版服务端后再远程升级。
-3. 在设备页找到“待迁移”的原设备，点击“迁移”，选择已认证且在线的新设备。核对原 `device-id` 与客户端日志中的新身份完整 ID，不能按名称或 IP 自动认领。
-4. 点击“迁移并撤销原身份”。原隧道保留 ID、公网端口、启停状态及累计流量，历史记录不改写；页面转到新设备的隧道，检查期望/生效配置与应用错误。配置保存和设备应用分开，迁移保存成功不等于所有监听均已就绪。
+客户端使用独立 Ed25519 密钥认证，通信协议版本与数据库格式标记均为 `1`。
 
 设备页的“撤销身份”操作会断开当前接入并停止相关隧道，服务端重启后仍拒绝该密钥，客户端识别撤销原因后退出。撤销针对该密钥身份；共享登记凭据持有者仍可登记新身份，新身份不会继承旧隧道。已登记身份通过密钥重连，接入命令中的服务端指纹仍须正确。
 
-私钥丢失或损坏时，使用新的客户端身份目录登记新身份，先撤销原身份，再迁移隧道；损坏私钥不会被程序替换。需要回退旧程序时，应恢复升级前的完整备份，不能让旧服务端写入新数据库。Unix 私钥文件按 0600 创建，Windows 应使用用户私有目录并保护目录 ACL。
+私钥丢失或损坏时，使用新的客户端数据目录登记新身份，并在设备页撤销原身份；损坏私钥不会被程序覆盖。Unix 私钥文件按 0600 创建，Windows 应使用用户私有目录并保护目录 ACL。
 
 ## 行为验证
 
-先完成前端构建，再执行 `go test ./... -timeout=5m` 与 `go vet ./...`。测试使用临时数据库与本地 TCP/UDP 服务，覆盖两种接入、TCP 双向传输与半关闭、UDP 多来源与大数据报、配置切换与失败保留、恢复、停用、认证、改密和历史清理。非 `-short` 测试还运行代表性负载和实际客户端替换、退出、重启；升级验证使用隔离临时密钥和两个测试版本，不修改正式信任配置。Windows 另覆盖临时目录写入拒绝 ACL，测试后恢复。
+先完成前端构建，再执行 `go test ./... -timeout=5m` 与 `go vet ./...`。测试使用临时数据库与本地 TCP/UDP 服务，覆盖 TCP 双向传输与半关闭、UDP 多来源与大数据报、配置切换与失败保留、恢复、停用、密钥认证、未知控制请求返回错误、改密和历史清理。非 `-short` 测试还运行代表性负载和实际客户端替换、退出、重启；升级验证使用隔离临时密钥和两个测试版本，不修改正式信任配置。Windows 另覆盖临时目录写入拒绝 ACL，测试后恢复。
 
-可靠 UDP 承载的能力协商、旧端兼容、模式切换、跨代次停用和重启恢复回归见 [服务端测试](../internal/server/udp_mode_test.go) 与 [客户端测试](../internal/client/udp_mode_test.go)。UDP 内容校验包含三个来源与 8192 字节报文；系统在发送阶段以 `EMSGSIZE` 拒绝 65507 字节时，该最大数据报用例明确跳过，8192 字节仍执行。最大数据报的实际通过环境见验收记录。
+UDP 内容校验包含三个来源与 8192 字节、65507 字节报文；系统在发送阶段以 `EMSGSIZE` 拒绝 65507 字节时，该最大数据报用例明确跳过，8192 字节仍执行。最大数据报的实际通过环境见验收记录。
 
-身份回归见 [服务端身份测试](../internal/server/identity_test.go)、[客户端密钥测试](../internal/client/identity_test.go) 和 [存储迁移测试](../internal/store/identity_test.go)，覆盖凭据与 ID 冒领、仅公钥冒领、签名重放、挑战期间撤销、重启后撤销保留、事务回滚及旧设备显式迁移。可靠 UDP 测试中的低能力对端仍执行协议 2 密钥认证。
+身份回归见 [服务端身份测试](../internal/server/identity_test.go) 与 [客户端密钥测试](../internal/client/identity_test.go)，覆盖凭据与 ID 冒领、仅公钥冒领、签名重放、挑战期间撤销及重启后撤销保留。
 
 竞争检测需支持 CGO 的本机工具链；CI 命令为 `go test -race ./internal/... -short -timeout=3m`，`-short` 会跳过代表性负载与实际升级。
 
-浏览器检查先构建两个程序到 `bin/`（Windows 使用 `.exe`），执行 `pnpm --dir web exec playwright install chromium`，再执行 `pnpm --dir web exec playwright test`。测试自行启动临时服务端、QUIC 客户端和 TCP 目标，检查管理操作与真实转发。截图与失败跟踪位于 `web/test-results`，不提交。测试结束删除隔离数据。
+浏览器检查先构建两个程序到 `bin/`（Windows 使用 `.exe`），再执行 `pnpm --dir web exec playwright test`。测试自行启动临时服务端、客户端和本地 TCP/UDP 目标，检查管理操作与真实转发。截图与失败跟踪位于 `web/test-results`，不提交。测试结束删除隔离数据。
 
 慢链路回归默认跳过，也未接入 CI。在支持网络命名空间的 Linux 上，准备 `unshare`、`ip`、`tc`，完成前端构建后，以有权创建网络命名空间和配置 netem 的用户执行：
 
 ```sh
-bash scripts/test-slow-link.sh transfer both
-bash scripts/test-slow-link.sh recovery both
+bash scripts/test-slow-link.sh transfer
+bash scripts/test-slow-link.sh recovery
 ```
 
 [脚本](../scripts/test-slow-link.sh) 在隔离网络命名空间中设置延迟、抖动、丢包和带宽限制。`transfer` 注入短时完全丢包，检查双向内容校验、传输期间管理操作与接入连续性；`recovery` 注入持续断网，检查旧连接中断、同身份恢复、尊重离线停用和重新启用后的新连接。数据量可由 `TUNNELQUAY_SLOW_BYTES` 调整，参数及默认值见脚本与 [测试](../internal/server/slow_test.go)。隔离回归不能替代公网复验。

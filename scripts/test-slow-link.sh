@@ -30,16 +30,10 @@ if [[ ${1:-} == --inside ]]; then
 fi
 
 mode=${1:-transfer}
-network=${2:-both}
 case "$mode" in
   transfer) pause=15 ;;
   recovery) pause=95; export TUNNELQUAY_SLOW_EXPECT_DROP=1 ;;
   *) echo '模式须为 transfer 或 recovery' >&2; exit 1 ;;
-esac
-case "$network" in
-  tcp|quic) networks=$network ;;
-  both) networks='tcp quic' ;;
-  *) echo '传输须为 tcp、quic 或 both' >&2; exit 1 ;;
 esac
 for command in go unshare ip tc; do
   command -v "$command" >/dev/null || { echo "缺少测试工具：$command" >&2; exit 1; }
@@ -52,6 +46,4 @@ trap 'rm -f -- "$run_dir/server.test"; rmdir -- "$run_dir"' EXIT
 go test -c -o "$run_dir/server.test" ./internal/server
 export TUNNELQUAY_SLOW_TEST=1
 export TUNNELQUAY_SLOW_BYTES=${TUNNELQUAY_SLOW_BYTES:-10485760}
-for selected in $networks; do
-  unshare -n bash "$repo_dir/scripts/test-slow-link.sh" --inside "$run_dir/server.test" "$selected" "$pause"
-done
+unshare -n bash "$repo_dir/scripts/test-slow-link.sh" --inside "$run_dir/server.test" "tcp" "$pause"
