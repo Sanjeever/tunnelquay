@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { Copy, Pencil, Plus, ArrowUpRight, Ban } from "lucide-react";
+import { Copy, Pencil, Plus, ArrowUpRight, Ban, Trash2 } from "lucide-react";
 import { api, time, useLoad, type Device, type Settings } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorMessage, Modal, State } from "../components/common";
@@ -10,21 +10,26 @@ export function Devices() {
   const devices = useLoad<Device[]>("/devices", []);
   const [rename, setRename] = useState<Device | null>(null);
   const [command, setCommand] = useState<string | null>(null);
+  const [systemdUnit, setSystemdUnit] = useState<string>("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [unitCopied, setUnitCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   async function connect() {
     setError("");
     try {
       const settings = await api<Settings>("/settings");
-      if (!settings.public_address) {
+      const target = settings.public_address || settings.suggested_address;
+      if (!target) {
         setError("请先在设置中保存客户端接入地址");
         return;
       }
-      const address = new URL(`tcp://${settings.public_address}`);
+      const connectURI = `tq://${settings.credential}@${target}`;
       setCopied(false);
-      setCommand(
-        `tunnelquay-client -address ${address.hostname.replace(/^\[|\]$/g, "")} -port ${address.port} -credential ${settings.credential}`,
+      setUnitCopied(false);
+      setCommand(`tunnelquay-client -connect ${connectURI}`);
+      setSystemdUnit(
+        `[Unit]\nDescription=TunnelQuay Client\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nEnvironment="TUNNELQUAY_CONNECT=${connectURI}"\nExecStart=/usr/local/bin/tunnelquay-client\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target`,
       );
     } catch (e) {
       setError((e as Error).message);
@@ -54,6 +59,20 @@ export function Devices() {
     setBusy(true);
     try {
       await api(`/devices/${encodeURIComponent(device.id)}/revoke`, "POST");
+      devices.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function remove(device: Device) {
+    if (!window.confirm(`删除离线设备“${device.name}”？关联隧道将一并删除。`))
+      return;
+    setError("");
+    setBusy(true);
+    try {
+      await api(`/devices/${encodeURIComponent(device.id)}`, "DELETE");
       devices.refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -134,6 +153,17 @@ export function Devices() {
                             <Ban size={14} />
                           </Button>
                         )}
+                        {!d.online && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`删除 ${d.name}`}
+                            disabled={busy}
+                            onClick={() => void remove(d)}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -185,10 +215,41 @@ export function Devices() {
       )}
       {command !== null && (
         <Modal title="接入设备" close={() => setCommand(null)}>
-          <label>
-            客户端命令
-            <textarea readOnly value={command} rows={5} className="mono" />
-          </label>
+          <div className="upgrade-form">
+            <label>
+              客户端命令
+              <textarea readOnly value={command} rows={3} className="mono" />
+            </label>
+            <details>
+              <summary>systemd 常驻服务配置</summary>
+              <label>
+                /etc/systemd/system/tunnelquay-client.service
+                <textarea
+                  readOnly
+                  value={systemdUnit}
+                  rows={8}
+                  className="mono"
+                />
+              </label>
+              <div style={{ marginTop: 10 }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(systemdUnit);
+                      setUnitCopied(true);
+                    } catch {
+                      setError("复制失败，请手动选择内容");
+                    }
+                  }}
+                >
+                  <Copy size={14} />
+                  {unitCopied ? "已复制服务配置" : "复制服务配置"}
+                </Button>
+              </div>
+            </details>
+          </div>
           <footer>
             <Button
               variant="outline"

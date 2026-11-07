@@ -8,6 +8,7 @@ export function Settings() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [rotated, setRotated] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSaved, setPasswordSaved] = useState(false);
   async function save(e: FormEvent<HTMLFormElement>) {
@@ -23,6 +24,26 @@ export function Settings() {
       });
       setSaved(true);
       settings.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function rotateCredential() {
+    if (
+      !window.confirm(
+        "重置接入凭据后，旧接入命令将无法登记新设备，已登记设备保持正常重连。继续？",
+      )
+    )
+      return;
+    setBusy(true);
+    setError("");
+    setRotated(false);
+    try {
+      const next = await api<SettingsData>("/settings/credential", "POST");
+      settings.setData(next);
+      setRotated(true);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -60,7 +81,11 @@ export function Settings() {
                 客户端接入地址
                 <input
                   name="public_address"
-                  defaultValue={settings.data.public_address}
+                  defaultValue={
+                    settings.data.public_address ||
+                    settings.data.suggested_address ||
+                    ""
+                  }
                   placeholder="203.0.113.10:7000"
                   required
                 />
@@ -90,9 +115,19 @@ export function Settings() {
                 </label>
               </div>
               <ErrorMessage message={error} />
-              <Button type="submit" disabled={busy}>
-                {busy ? "正在保存…" : saved ? "已保存" : "保存设置"}
-              </Button>
+              <div className="actions">
+                <Button type="submit" disabled={busy}>
+                  {busy ? "正在保存…" : saved ? "已保存" : "保存设置"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => void rotateCredential()}
+                >
+                  {rotated ? "已重置凭据" : "重置接入凭据"}
+                </Button>
+              </div>
             </form>
           </section>
         )}

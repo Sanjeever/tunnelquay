@@ -44,12 +44,8 @@ async function launchServer() {
 
 async function launchClient() {
   client = spawn(resolve("..", "bin", `tunnelquay-client${suffix}`), [
-    "-address",
-    "127.0.0.1",
-    "-port",
-    address.split(":")[1],
-    "-credential",
-    credential,
+    "-connect",
+    `tq://${credential}@${address}`,
     "-data-dir",
     join(dir, "client"),
   ]);
@@ -109,10 +105,24 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
     .getByLabel("新密码", { exact: true })
     .fill("browser-test-password-123");
   await page.getByRole("button", { name: "保存密码" }).click();
+  await page.getByRole("link", { name: "设备", exact: true }).click();
+  await expect(page.getByText("在线", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "接入设备", exact: true }).click();
+  await expect(page.getByLabel("客户端命令")).toHaveValue(
+    new RegExp(`tunnelquay-client -connect tq://\\S+@${address}`),
+  );
+  await page.getByText("systemd 常驻服务配置", { exact: true }).click();
+  await expect(
+    page.getByLabel("/etc/systemd/system/tunnelquay-client.service"),
+  ).toContainText("Restart=always");
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
-  await page.getByLabel("客户端接入地址").fill(address);
+  await expect(page.getByLabel("客户端接入地址")).toHaveValue(address);
   await page.getByRole("button", { name: "保存设置" }).click();
   await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "重置接入凭据" }).click();
+  await expect(page.getByRole("button", { name: "已重置凭据" })).toBeVisible();
   await page.getByRole("link", { name: "设备", exact: true }).click();
   await expect(page.getByText("在线", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "客户端升级", exact: true }).click();
@@ -131,15 +141,11 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await page.getByLabel("设备名称").fill("本地设备");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("本地设备", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "接入设备", exact: true }).click();
-  await expect(page.getByLabel("客户端命令")).toHaveValue(
-    /tunnelquay-client -address 127.0.0.1/,
-  );
-  await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("link", { name: "隧道", exact: true }).click();
   await page.getByRole("button", { name: "新建隧道", exact: true }).click();
   await page.getByLabel("名称", { exact: true }).fill("浏览器验收隧道");
   await page.getByLabel("目标端口", { exact: true }).fill(String(targetPort));
+  await page.getByRole("button", { name: /填入当前 IP/ }).click();
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("监听就绪", { exact: true })).toBeVisible();
   const tunnels = await page.request.get(`http://${address}/api/tunnels`);
@@ -208,6 +214,8 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   ).toBeVisible();
   await page.getByRole("button", { name: "已编辑隧道", exact: true }).click();
   await expect(page.getByText("可达", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "探测目标", exact: true }).click();
+  await expect(page.getByText("可达", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "查看连接" }).click();
   await page.getByRole("tab", { name: "历史记录" }).click();
   await expect(page.locator("tbody tr")).toHaveCount(1);
@@ -250,5 +258,8 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
     path: "test-results/identity-revoked-mobile.png",
     fullPage: true,
   });
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除 本地设备", exact: true }).click();
+  await expect(page.getByText("暂无设备", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

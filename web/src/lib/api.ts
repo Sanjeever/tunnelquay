@@ -61,6 +61,7 @@ export interface Tunnel {
   host: string;
   target_port: number;
   public_port: number;
+  allow_cidrs?: string;
   enabled: boolean;
   error: string;
   status: string;
@@ -104,6 +105,8 @@ export interface Connection {
 }
 export interface Settings {
   public_address: string;
+  suggested_address?: string;
+  client_ip?: string;
   port_min: number;
   port_max: number;
   credential: string;

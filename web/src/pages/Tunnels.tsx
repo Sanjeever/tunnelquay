@@ -1,12 +1,20 @@
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Plus, Pencil, ArrowUpRight, Trash2 } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  ArrowUpRight,
+  Trash2,
+  Copy,
+  Activity,
+} from "lucide-react";
 import {
   api,
   bytes,
   protocolName,
   useLoad,
   type Device,
+  type Settings,
   type Tunnel,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
@@ -15,13 +23,19 @@ import { Empty, ErrorMessage, Modal, State } from "../components/common";
 export function Tunnels() {
   const tunnels = useLoad<Tunnel[]>("/tunnels", []);
   const devices = useLoad<Device[]>("/devices", []);
+  const settings = useLoad<Settings | null>("/settings", null);
   const [params] = useSearchParams();
   const [edit, setEdit] = useState<Partial<Tunnel> | null>(null);
   const [detail, setDetail] = useState<Tunnel | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [probing, setProbing] = useState<string | null>(null);
+  const [copiedPort, setCopiedPort] = useState<string | null>(null);
   const [changing, setChanging] = useState<string | null>(null);
   const names = new Map(devices.data.map((d) => [d.id, d.name]));
+  const rawAddress =
+    settings.data?.public_address || settings.data?.suggested_address || "";
+  const publicHost = rawAddress ? rawAddress.replace(/:\d+$/, "") : "";
   const items = tunnels.data
     .filter(
       (t) =>
@@ -39,22 +53,41 @@ export function Tunnels() {
       host: data.get("host"),
       target_port: Number(data.get("target_port")),
       public_port: Number(data.get("public_port")),
+      allow_cidrs: String(data.get("allow_cidrs") || "").trim(),
       enabled: data.get("enabled") === "on",
     };
     setBusy(true);
     setError("");
     try {
-      await api(
+      const saved = await api<Tunnel>(
         edit?.id ? `/tunnels/${edit.id}` : "/tunnels",
         edit?.id ? "PUT" : "POST",
         cfg,
       );
       setEdit(null);
       tunnels.refresh();
+      if (saved.enabled && saved.status === "running") {
+        void probe(saved.id);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+  async function probe(id: string) {
+    setProbing(id);
+    setError("");
+    try {
+      const updated = await api<Tunnel>(`/tunnels/${id}/probe`, "POST");
+      tunnels.setData((list) =>
+        list.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setDetail((current) => (current?.id === updated.id ? updated : current));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setProbing(null);
     }
   }
   async function toggle(t: Tunnel) {
@@ -145,7 +178,33 @@ export function Tunnels() {
                     <div className="muted small">{names.get(t.device_id)}</div>
                   </td>
                   <td className="mono">{protocolName(t.protocol)}</td>
-                  <td className="mono">{t.public_port}</td>
+                  <td className="mono">
+                    {publicHost ? (
+                      <button
+                        type="button"
+                        className="text-button mono"
+                        title={`复制 ${publicHost}:${t.public_port}`}
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(
+                              `${publicHost}:${t.public_port}`,
+                            );
+                            setCopiedPort(t.id);
+                            setTimeout(() => setCopiedPort(null), 1500);
+                          } catch {
+                            /* ignore */
+                          }
+                        }}
+                      >
+                        {t.public_port}
+                        {copiedPort === t.id && (
+                          <span className="muted small"> 已复制</span>
+                        )}
+                      </button>
+                    ) : (
+                      t.public_port
+                    )}
+                  </td>
                   <td className="mono">
                     {t.host}:{t.target_port}
                   </td>
@@ -302,6 +361,38 @@ export function Tunnels() {
                 启用
               </label>
             </div>
+            <div className="field-group">
+              <div className="label-row">
+                <label htmlFor="allow_cidrs">允许来源 IP / CIDR</label>
+                {settings.data?.client_ip && (
+                  <button
+                    type="button"
+                    className="text-button small"
+                    onClick={() => {
+                      const current = (edit.allow_cidrs || "").trim();
+                      const ip = settings.data!.client_ip!;
+                      const next = current
+                        ? current.includes(ip)
+                          ? current
+                          : `${current}, ${ip}`
+                        : ip;
+                      setEdit({ ...edit, allow_cidrs: next });
+                    }}
+                  >
+                    填入当前 IP（{settings.data.client_ip}）
+                  </button>
+                )}
+              </div>
+              <input
+                id="allow_cidrs"
+                name="allow_cidrs"
+                value={edit.allow_cidrs || ""}
+                onChange={(e) =>
+                  setEdit({ ...edit, allow_cidrs: e.target.value })
+                }
+                placeholder="留空允许全部来源，多个地址或网段用逗号分隔"
+              />
+            </div>
             <ErrorMessage message={error} />
             <footer>
               <Button
@@ -335,6 +426,8 @@ export function Tunnels() {
               {protocolName(detail.protocol)} :{detail.public_port} →{" "}
               {detail.host}:{detail.target_port}
             </dd>
+            <dt>来源白名单</dt>
+            <dd className="mono">{detail.allow_cidrs || "全部允许"}</dd>
             <dt>累计流量 ↑ / ↓</dt>
             <dd>
               {bytes(detail.up)} / {bytes(detail.down)}
@@ -343,6 +436,34 @@ export function Tunnels() {
           <ErrorMessage message={detail.error} />
           <ErrorMessage message={detail.target_error} />
           <footer>
+            {publicHost && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(
+                      `${publicHost}:${detail.public_port}`,
+                    );
+                    setCopiedPort(detail.id);
+                  } catch {
+                    /* ignore */
+                  }
+                }}
+              >
+                <Copy size={14} />
+                {copiedPort === detail.id ? "已复制地址" : "复制公网地址"}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              disabled={probing === detail.id}
+              onClick={() => void probe(detail.id)}
+            >
+              <Activity size={14} />
+              {probing === detail.id ? "正在探测…" : "探测目标"}
+            </Button>
             <Button asChild variant="outline">
               <Link
                 to={`/connections?tunnel_id=${detail.id}`}
