@@ -1,5 +1,5 @@
-import { useEffect, useRef, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AlertCircle, Check, Copy, Loader2, X } from "lucide-react";
 import { Button } from "./ui/button";
 
 export function BrandMark({ size = 24 }: { size?: number }) {
@@ -34,11 +34,13 @@ export function BrandMark({ size = 24 }: { size?: number }) {
 
 export function ErrorMessage({ message }: { message: string }) {
   return message ? (
-    <p className="error" role="alert">
-      {message}
-    </p>
+    <div className="error error-box" role="alert">
+      <AlertCircle size={15} className="error-icon" aria-hidden="true" />
+      <span>{message}</span>
+    </div>
   ) : null;
 }
+
 export function Empty({
   loading,
   children,
@@ -46,8 +48,20 @@ export function Empty({
   loading?: boolean;
   children: ReactNode;
 }) {
-  return <div className="empty">{loading ? "正在加载…" : children}</div>;
+  return (
+    <div className="empty" role={loading ? "status" : undefined}>
+      {loading ? (
+        <span className="loading-inline">
+          <Loader2 size={16} className="spin" />
+          正在加载…
+        </span>
+      ) : (
+        children
+      )}
+    </div>
+  );
 }
+
 export function Modal({
   title,
   children,
@@ -83,6 +97,105 @@ export function Modal({
     </dialog>
   );
 }
+
+export function Drawer({
+  title,
+  subtitle,
+  children,
+  footer,
+  close,
+}: {
+  title: string;
+  subtitle?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  close: () => void;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = ref.current!;
+    dialog.showModal();
+    return () => dialog.close();
+  }, []);
+  return (
+    <dialog
+      ref={ref}
+      className="drawer"
+      aria-labelledby="drawer-title"
+      onCancel={close}
+      onClick={(e) => {
+        if (e.target === ref.current) close();
+      }}
+    >
+      <div className="drawer-panel">
+        <header className="drawer-header">
+          <div className="drawer-heading">
+            <h2 id="drawer-title">{title}</h2>
+            {subtitle && <div className="drawer-subtitle">{subtitle}</div>}
+          </div>
+          <Button variant="ghost" size="sm" aria-label="关闭" onClick={close}>
+            <X size={16} />
+          </Button>
+        </header>
+        <div className="drawer-body">{children}</div>
+        {footer && <footer className="drawer-footer">{footer}</footer>}
+      </div>
+    </dialog>
+  );
+}
+
+export function CopyAction({
+  value,
+  label = "复制",
+  copiedLabel = "已复制",
+  iconOnly = false,
+  variant = "outline",
+  size = "default",
+  className = "",
+  onError,
+}: {
+  value: string;
+  label?: string;
+  copiedLabel?: string;
+  iconOnly?: boolean;
+  variant?: "default" | "outline" | "ghost" | "destructive";
+  size?: "default" | "sm";
+  className?: string;
+  onError?: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    } catch {
+      onError?.();
+    }
+  }
+  return (
+    <Button
+      type="button"
+      variant={variant}
+      size={size}
+      className={`copy-btn ${className}`.trim()}
+      aria-label={copied ? copiedLabel : label}
+      title={copied ? copiedLabel : label}
+      onClick={() => void handleCopy()}
+      onBlur={() => setCopied(false)}
+    >
+      <span className="copy-icon-wrap" aria-hidden="true">
+        {copied ? (
+          <Check size={14} className="good icon-pop" />
+        ) : (
+          <Copy size={14} className="icon-pop" />
+        )}
+      </span>
+      {!iconOnly && <span>{copied ? copiedLabel : label}</span>}
+    </Button>
+  );
+}
+
 export function State({ value }: { value: string }) {
   const labels: Record<string, string> = {
     running: "监听就绪",
