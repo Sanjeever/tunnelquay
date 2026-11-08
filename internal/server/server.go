@@ -48,8 +48,7 @@ type Server struct {
 	rateSampleAt      time.Time
 	connections       map[string]*activeConnection
 	sessions          map[string]loginSession
-	loginAttempts     int
-	loginWindow       time.Time
+	loginAttempts     map[string]loginAttempt
 	listener          net.Listener
 	http              *http.Server
 	ctx               context.Context
@@ -74,7 +73,7 @@ func New(opts Options) (*Server, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{Options: opts, Store: db, Identity: id, peers: map[string]*peer{}, devices: map[string]store.Device{}, tunnels: map[string]*store.Tunnel{}, running: map[string]*runtimeTunnel{}, connections: map[string]*activeConnection{}, sessions: map[string]loginSession{}, ctx: ctx, cancel: cancel}
+	s := &Server{Options: opts, Store: db, Identity: id, peers: map[string]*peer{}, devices: map[string]store.Device{}, tunnels: map[string]*store.Tunnel{}, running: map[string]*runtimeTunnel{}, connections: map[string]*activeConnection{}, sessions: map[string]loginSession{}, loginAttempts: map[string]loginAttempt{}, ctx: ctx, cancel: cancel}
 	s.peerSlots = make(chan struct{}, 128)
 	s.fileSlots = make(chan struct{}, 2)
 	s.rateSamples = map[string][2]int64{}
@@ -151,6 +150,10 @@ func (s *Server) Start() error {
 				c.SetDeadline(time.Now().Add(10 * time.Second))
 				tc := c.(*tls.Conn)
 				if e := tc.HandshakeContext(s.ctx); e != nil {
+					c.Close()
+					return
+				}
+				if tc.ConnectionState().NegotiatedProtocol != "tunnelquay/1" {
 					c.Close()
 					return
 				}

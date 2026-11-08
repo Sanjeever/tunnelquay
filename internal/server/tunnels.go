@@ -494,6 +494,11 @@ func (s *Server) maintenance() {
 					delete(s.sessions, key)
 				}
 			}
+			for ip, v := range s.loginAttempts {
+				if now.Sub(v.window) > time.Minute {
+					delete(s.loginAttempts, ip)
+				}
+			}
 			s.mu.Unlock()
 			if err := s.flushHistory(); err != nil {
 				reportError("保存连接记录失败", err)

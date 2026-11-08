@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -69,6 +70,19 @@ func TestAuthenticationRejectsAndOfflineRecovery(t *testing.T) {
 			}
 		})
 	}
+	t.Run("无ALPN探测连接立即断开", func(t *testing.T) {
+		raw, err := tls.Dial("tcp", s.Addr(), &tls.Config{MinVersion: tls.VersionTLS13, InsecureSkipVerify: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer raw.Close()
+		raw.SetDeadline(time.Now().Add(time.Second))
+		_, _ = raw.Write([]byte("GET / HTTP/1.1\r\nHost: example\r\n\r\n"))
+		buf := make([]byte, 16)
+		if _, err := raw.Read(buf); err == nil {
+			t.Fatal("未协商 tunnelquay/1 ALPN 的连接应被服务端立即关闭")
+		}
+	})
 	target := tcpTarget(t, "R")
 	tun, err := s.SaveTunnel(cfgFor(id, "both", target.Addr().String()))
 	if err != nil || tun.Error != "" {
@@ -436,6 +450,32 @@ func TestLoginPasswordAndOrigin(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 403 {
 		t.Fatalf("重置密码登录后应强制改密：%d", res.StatusCode)
+	}
+	postFromIP := func(ip, body string) *http.Response {
+		t.Helper()
+		req, e := http.NewRequest("POST", base+"/api/auth/login", strings.NewReader(body))
+		if e != nil {
+			t.Fatal(e)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Forwarded-For", ip)
+		res, e := h.Do(req)
+		if e != nil {
+			t.Fatal(e)
+		}
+		t.Cleanup(func() { res.Body.Close() })
+		return res
+	}
+	for i := 0; i < 10; i++ {
+		if r := postFromIP("198.51.100.10", `{"password":"wrong"}`); r.StatusCode != 401 {
+			t.Fatalf("第 %d 次错误登录状态码异常：%d", i+1, r.StatusCode)
+		}
+	}
+	if r := postFromIP("198.51.100.10", `{"password":"wrong"}`); r.StatusCode != 429 {
+		t.Fatalf("同一来源 IP 超出阈值应返回 429，实际：%d", r.StatusCode)
+	}
+	if r := postFromIP("198.51.100.11", fmt.Sprintf(`{"password":%q}`, newTemp)); r.StatusCode != 200 {
+		t.Fatalf("其他来源 IP 不应被连带限流，实际：%d", r.StatusCode)
 	}
 }
 

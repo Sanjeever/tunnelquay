@@ -20,6 +20,10 @@ import (
 )
 
 type loginSession struct{ Expires time.Time }
+type loginAttempt struct {
+	count  int
+	window time.Time
+}
 
 func respond(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -85,6 +89,7 @@ func (s *Server) ResetPassword() (string, error) {
 	}
 	s.mu.Lock()
 	clear(s.sessions)
+	clear(s.loginAttempts)
 	s.TemporaryPassword = temp
 	s.mu.Unlock()
 	return temp, nil
@@ -222,13 +227,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	ip := requestClientIP(r)
+	now := time.Now()
 	s.mu.Lock()
-	if time.Since(s.loginWindow) > time.Minute {
-		s.loginWindow = time.Now()
-		s.loginAttempts = 0
+	attempt := s.loginAttempts[ip]
+	if now.Sub(attempt.window) > time.Minute {
+		attempt = loginAttempt{window: now}
 	}
-	s.loginAttempts++
-	limited := s.loginAttempts > 10
+	if _, exists := s.loginAttempts[ip]; !exists && len(s.loginAttempts) >= 256 {
+		var oldestKey string
+		var oldestTime time.Time
+		for k, v := range s.loginAttempts {
+			if now.Sub(v.window) > time.Minute {
+				delete(s.loginAttempts, k)
+				continue
+			}
+			if oldestKey == "" || v.window.Before(oldestTime) {
+				oldestKey = k
+				oldestTime = v.window
+			}
+		}
+		if len(s.loginAttempts) >= 256 && oldestKey != "" {
+			delete(s.loginAttempts, oldestKey)
+		}
+	}
+	attempt.count++
+	s.loginAttempts[ip] = attempt
+	limited := attempt.count > 10
 	s.mu.Unlock()
 	if limited {
 		apiError(w, 429, "rate_limited", errors.New("登录尝试过多，请稍后重试"))
@@ -245,6 +270,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	token := transport.RandomID()
 	s.mu.Lock()
+	delete(s.loginAttempts, ip)
 	if len(s.sessions) >= 32 {
 		clear(s.sessions)
 	}
