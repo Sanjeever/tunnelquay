@@ -2,17 +2,22 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
+	"github.com/Sanjeever/tunnelquay/internal/buildinfo"
 	"github.com/Sanjeever/tunnelquay/internal/protocol"
 	"github.com/Sanjeever/tunnelquay/internal/transport"
 	"github.com/Sanjeever/tunnelquay/internal/update"
@@ -251,11 +256,23 @@ func githubGet(ctx context.Context, url string, limit int64) ([]byte, error) {
 	}
 	return b, nil
 }
-func (s *Server) officialReleases(w http.ResponseWriter, r *http.Request) {
-	b, err := githubGet(r.Context(), "https://api.github.com/repos/Sanjeever/tunnelquay/releases?per_page=30", protocol.MaxFrame)
+func (s *Server) releaseListEndpoint() string {
+	if s.releaseAPIURL != "" {
+		return s.releaseAPIURL
+	}
+	return "https://api.github.com/repos/Sanjeever/tunnelquay/releases?per_page=30"
+}
+func (s *Server) releaseDownloadPrefix(version string) string {
+	base := "https://github.com/Sanjeever/tunnelquay/releases/download"
+	if s.releaseDownloadURL != "" {
+		base = strings.TrimRight(s.releaseDownloadURL, "/")
+	}
+	return base + "/v" + version + "/"
+}
+func (s *Server) fetchOfficialVersions(ctx context.Context) ([]string, error) {
+	b, err := githubGet(ctx, s.releaseListEndpoint(), protocol.MaxFrame)
 	if err != nil {
-		apiError(w, 502, "github_failed", err)
-		return
+		return nil, err
 	}
 	var releases []struct {
 		Tag        string `json:"tag_name"`
@@ -263,8 +280,7 @@ func (s *Server) officialReleases(w http.ResponseWriter, r *http.Request) {
 		Prerelease bool   `json:"prerelease"`
 	}
 	if err = json.Unmarshal(b, &releases); err != nil {
-		apiError(w, 502, "github_failed", err)
-		return
+		return nil, err
 	}
 	items := []string{}
 	for _, v := range releases {
@@ -272,7 +288,86 @@ func (s *Server) officialReleases(w http.ResponseWriter, r *http.Request) {
 			items = append(items, strings.TrimPrefix(v.Tag, "v"))
 		}
 	}
+	return items, nil
+}
+func (s *Server) officialReleases(w http.ResponseWriter, r *http.Request) {
+	items, err := s.fetchOfficialVersions(r.Context())
+	if err != nil {
+		apiError(w, 502, "github_failed", err)
+		return
+	}
 	respond(w, 200, items)
+}
+func (s *Server) downloadAndCacheLocked(ctx context.Context, version, osName, arch string) (cachedRelease, string, int, error) {
+	if !update.ValidVersion(version) {
+		return cachedRelease{}, "invalid_version", 400, errors.New("版本无效")
+	}
+	base := s.releaseDownloadPrefix(version)
+	b, err := githubGet(ctx, base+"release-manifest.json", protocol.MaxFrame)
+	if err != nil {
+		return cachedRelease{}, "download_failed", 502, err
+	}
+	sigText, err := githubGet(ctx, base+"release-manifest.sig", 1024)
+	if err != nil {
+		return cachedRelease{}, "download_failed", 502, err
+	}
+	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigText)))
+	if err != nil {
+		return cachedRelease{}, "invalid_signature", 400, err
+	}
+	var m update.Manifest
+	if err = json.Unmarshal(b, &m); err != nil {
+		return cachedRelease{}, "invalid_manifest", 400, err
+	}
+	var artifact string
+	for _, a := range m.Artifacts {
+		if a.Component == "client" && a.OS == osName && a.Arch == arch {
+			artifact = a.Name
+			break
+		}
+	}
+	signed := update.Signed{Manifest: b, Signature: sig, Artifact: artifact}
+	manifest, a, err := update.Verify(signed, osName, arch)
+	if err != nil || manifest.Version != version {
+		if err == nil {
+			err = errors.New("签名清单版本与请求版本不匹配")
+		}
+		return cachedRelease{}, "verification_failed", 400, err
+	}
+	data, err := githubGet(ctx, base+a.Name, update.MaxArchive)
+	if err != nil {
+		return cachedRelease{}, "download_failed", 502, err
+	}
+	f, err := os.CreateTemp(s.Options.DataDir, ".download-")
+	if err != nil {
+		return cachedRelease{}, "cache_failed", 500, err
+	}
+	name := f.Name()
+	defer os.Remove(name)
+	_, err = f.Write(data)
+	f.Close()
+	if err != nil {
+		return cachedRelease{}, "cache_failed", 500, err
+	}
+	result, err := s.cachePackage(signed, name)
+	if err != nil {
+		return cachedRelease{}, "verification_failed", 400, err
+	}
+	return result, "", 200, nil
+}
+func (s *Server) ensureRelease(ctx context.Context, version, osName, arch string) (cachedRelease, error) {
+	if c, err := s.cached(version, osName, arch); err == nil {
+		return c, nil
+	} else if update.PublicKey == "" {
+		return cachedRelease{}, err
+	}
+	s.packageMu.Lock()
+	defer s.packageMu.Unlock()
+	if c, err := s.cached(version, osName, arch); err == nil {
+		return c, nil
+	}
+	res, _, _, err := s.downloadAndCacheLocked(ctx, version, osName, arch)
+	return res, err
 }
 func (s *Server) downloadRelease(w http.ResponseWriter, r *http.Request) {
 	if !s.packageMu.TryLock() {
@@ -284,68 +379,9 @@ func (s *Server) downloadRelease(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	if !update.ValidVersion(req.Version) {
-		apiError(w, 400, "invalid_version", errors.New("版本无效"))
-		return
-	}
-	base := "https://github.com/Sanjeever/tunnelquay/releases/download/v" + req.Version + "/"
-	b, err := githubGet(r.Context(), base+"release-manifest.json", protocol.MaxFrame)
+	result, code, status, err := s.downloadAndCacheLocked(r.Context(), req.Version, req.OS, req.Arch)
 	if err != nil {
-		apiError(w, 502, "download_failed", err)
-		return
-	}
-	sigText, err := githubGet(r.Context(), base+"release-manifest.sig", 1024)
-	if err != nil {
-		apiError(w, 502, "download_failed", err)
-		return
-	}
-	sig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(sigText)))
-	if err != nil {
-		apiError(w, 400, "invalid_signature", err)
-		return
-	}
-	var m update.Manifest
-	if err = json.Unmarshal(b, &m); err != nil {
-		apiError(w, 400, "invalid_manifest", err)
-		return
-	}
-	var artifact string
-	for _, a := range m.Artifacts {
-		if a.Component == "client" && a.OS == req.OS && a.Arch == req.Arch {
-			artifact = a.Name
-			break
-		}
-	}
-	signed := update.Signed{Manifest: b, Signature: sig, Artifact: artifact}
-	manifest, a, err := update.Verify(signed, req.OS, req.Arch)
-	if err != nil || manifest.Version != req.Version {
-		if err == nil {
-			err = errors.New("签名清单版本与请求版本不匹配")
-		}
-		apiError(w, 400, "verification_failed", err)
-		return
-	}
-	data, err := githubGet(r.Context(), base+a.Name, update.MaxArchive)
-	if err != nil {
-		apiError(w, 502, "download_failed", err)
-		return
-	}
-	f, err := os.CreateTemp(s.Options.DataDir, ".download-")
-	if err != nil {
-		apiError(w, 500, "cache_failed", err)
-		return
-	}
-	name := f.Name()
-	defer os.Remove(name)
-	_, err = f.Write(data)
-	f.Close()
-	if err != nil {
-		apiError(w, 500, "cache_failed", err)
-		return
-	}
-	result, err := s.cachePackage(signed, name)
-	if err != nil {
-		apiError(w, 400, "verification_failed", err)
+		apiError(w, status, code, err)
 		return
 	}
 	respond(w, 200, result)
@@ -397,9 +433,8 @@ func (s *Server) createUpgrade(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "unsupported", errors.New("设备不支持远程升级"))
 		return
 	}
-	cached, err := s.cached(req.Version, d.OS, d.Arch)
-	if err != nil {
-		apiError(w, 400, "package_missing", err)
+	if !update.ValidVersion(req.Version) {
+		apiError(w, 400, "invalid_version", errors.New("发行版本无效"))
 		return
 	}
 	if semver.Compare("v"+req.Version, "v"+d.Version) <= 0 && update.ValidVersion(d.Version) {
@@ -407,7 +442,7 @@ func (s *Server) createUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var tasks []update.Task
-	if err = s.Store.All("upgrades", &tasks); err != nil {
+	if err := s.Store.All("upgrades", &tasks); err != nil {
 		apiError(w, 500, "storage_failed", err)
 		return
 	}
@@ -416,6 +451,11 @@ func (s *Server) createUpgrade(w http.ResponseWriter, r *http.Request) {
 			apiError(w, 409, "task_exists", errors.New("设备已有升级任务，请先核对现有任务结果"))
 			return
 		}
+	}
+	cached, err := s.ensureRelease(r.Context(), req.Version, d.OS, d.Arch)
+	if err != nil {
+		apiError(w, 400, "package_missing", err)
+		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	task := update.Task{ID: transport.RandomID(), DeviceID: d.ID, From: d.Version, Version: req.Version, Stage: "queued", Created: now, Updated: now, Package: cached.Signed}
@@ -551,4 +591,213 @@ func (s *Server) sendUpgrade(p *peer, stream protocol.Stream, id string) {
 		return
 	}
 	protocol.Write(stream, protocol.Message{Error: "升级任务无效或已结束"})
+}
+
+func (s *Server) verifyClientToken(r *http.Request) (string, string, error) {
+	q := r.URL.Query()
+	rawConnect := strings.TrimSpace(q.Get("connect"))
+	rawCred := strings.TrimSpace(q.Get("credential"))
+	var addr string
+	var err error
+	if rawConnect != "" {
+		addr, rawCred, err = transport.ParseConnect(rawConnect)
+		if err != nil {
+			return "", "", err
+		}
+	} else if rawCred != "" {
+		addr, _ = s.Store.Get("public_address")
+		if addr == "" && r.Host != "" {
+			host := r.Host
+			if h, _, e := net.SplitHostPort(r.Host); e == nil {
+				host = h
+			}
+			if s.listener != nil {
+				if _, p, e := net.SplitHostPort(s.Addr()); e == nil {
+					addr = net.JoinHostPort(host, p)
+				}
+			}
+		}
+		if addr == "" {
+			return "", "", errors.New("缺少服务端接入地址")
+		}
+	} else {
+		return "", "", errors.New("缺少客户端接入凭据")
+	}
+	secret, fp, err := transport.ParseCredential(rawCred)
+	if err != nil {
+		return "", "", err
+	}
+	s.mu.RLock()
+	serverSecret := s.Identity.Secret
+	serverFP := s.Identity.Fingerprint
+	s.mu.RUnlock()
+	if subtle.ConstantTimeCompare([]byte(secret), []byte(serverSecret)) != 1 || subtle.ConstantTimeCompare([]byte(fp), []byte(serverFP)) != 1 {
+		return "", "", errors.New("接入凭据无效或已过期")
+	}
+	return transport.FormatConnect(addr, rawCred), rawCred, nil
+}
+
+func (s *Server) latestCachedOrOfficialRelease(ctx context.Context, osName, arch, requestedVersion string) (cachedRelease, error) {
+	if requestedVersion != "" {
+		return s.ensureRelease(ctx, requestedVersion, osName, arch)
+	}
+	var best cachedRelease
+	versions, err := os.ReadDir(s.cacheDir())
+	if err == nil {
+		for _, v := range versions {
+			if !v.IsDir() || !update.ValidVersion(v.Name()) || semver.Prerelease("v"+v.Name()) != "" {
+				continue
+			}
+			if entry, e := s.cached(v.Name(), osName, arch); e == nil {
+				if best.Version == "" || semver.Compare("v"+entry.Version, "v"+best.Version) > 0 {
+					best = entry
+				}
+			}
+		}
+	}
+	if best.Version != "" {
+		return best, nil
+	}
+	if update.PublicKey != "" {
+		if update.ValidVersion(buildinfo.Version) {
+			if entry, e := s.ensureRelease(ctx, buildinfo.Version, osName, arch); e == nil {
+				return entry, nil
+			}
+		}
+		if list, e := s.fetchOfficialVersions(ctx); e == nil && len(list) > 0 {
+			return s.ensureRelease(ctx, list[0], osName, arch)
+		}
+	}
+	return cachedRelease{}, errors.New("没有适用于该设备的已验证发行包")
+}
+
+func (s *Server) resolveClientBinary(ctx context.Context, osName, arch, version string) (string, string, func(), error) {
+	if (osName != "linux" && osName != "darwin" && osName != "windows") || (arch != "amd64" && arch != "arm64") {
+		return "", "", nil, errors.New("不支持的操作系统或架构")
+	}
+	if cached, err := s.latestCachedOrOfficialRelease(ctx, osName, arch, version); err == nil {
+		_, a, err := update.Verify(cached.Signed, osName, arch)
+		if err != nil {
+			return "", "", nil, err
+		}
+		tmpDir, err := os.MkdirTemp(s.Options.DataDir, ".client-bin-")
+		if err != nil {
+			return "", "", nil, err
+		}
+		dest := filepath.Join(tmpDir, a.Binary)
+		if err = update.Extract(filepath.Join(s.cacheDir(), cached.Version, a.Name), dest, a); err != nil {
+			os.RemoveAll(tmpDir)
+			return "", "", nil, err
+		}
+		return dest, a.Binary, func() { os.RemoveAll(tmpDir) }, nil
+	}
+	if version == "" && osName == runtime.GOOS && arch == runtime.GOARCH {
+		binaryName := "tunnelquay-client"
+		if osName == "windows" {
+			binaryName += ".exe"
+		}
+		var candidates []string
+		if exe, err := os.Executable(); err == nil {
+			candidates = append(candidates, filepath.Join(filepath.Dir(exe), binaryName))
+		}
+		candidates = append(candidates, filepath.Join("bin", binaryName))
+		for _, p := range candidates {
+			if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
+				return p, binaryName, func() {}, nil
+			}
+		}
+	}
+	return "", "", nil, errors.New("服务端尚无适用于该平台的客户端程序，请先在客户端升级面板下载或导入发行包")
+}
+
+func (s *Server) clientBinary(w http.ResponseWriter, r *http.Request) {
+	if _, _, err := s.verifyClientToken(r); err != nil {
+		apiError(w, 401, "unauthorized", err)
+		return
+	}
+	select {
+	case s.fileSlots <- struct{}{}:
+		defer func() { <-s.fileSlots }()
+	default:
+		apiError(w, 429, "busy", errors.New("文件传输达到并发上限，请稍后重试"))
+		return
+	}
+	q := r.URL.Query()
+	path, name, cleanup, err := s.resolveClientBinary(r.Context(), q.Get("os"), q.Get("arch"), q.Get("version"))
+	if err != nil {
+		apiError(w, 404, "binary_unavailable", err)
+		return
+	}
+	defer cleanup()
+	f, err := os.Open(path)
+	if err != nil {
+		apiError(w, 500, "read_failed", err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		apiError(w, 500, "read_failed", err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+func (s *Server) clientInstallScript(w http.ResponseWriter, r *http.Request) {
+	connectURI, cred, err := s.verifyClientToken(r)
+	if err != nil {
+		apiError(w, 401, "unauthorized", err)
+		return
+	}
+	scheme := "http"
+	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	baseURL := scheme + "://" + r.Host
+	script := fmt.Sprintf(`#!/bin/sh
+set -eu
+
+OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+ARCH="$(uname -m)"
+case "$ARCH" in
+  x86_64|amd64) ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
+  *) echo "不支持的 CPU 架构: $ARCH" >&2; exit 1 ;;
+esac
+case "$OS" in
+  linux|darwin) ;;
+  *) echo "不支持的操作系统: $OS" >&2; exit 1 ;;
+esac
+
+CONNECT='%s'
+BASE_URL='%s'
+CRED='%s'
+
+if [ "$(id -u)" -eq 0 ]; then
+  INSTALL_DIR="/usr/local/bin"
+else
+  INSTALL_DIR="$HOME/.local/bin"
+  mkdir -p "$INSTALL_DIR"
+fi
+TARGET="$INSTALL_DIR/tunnelquay-client"
+TMP="$TARGET.tmp.$$"
+trap 'rm -f "$TMP"' EXIT
+
+curl -fsSL "$BASE_URL/api/client/binary?os=$OS&arch=$ARCH&credential=$CRED" -o "$TMP"
+chmod 0755 "$TMP"
+mv "$TMP" "$TARGET"
+
+if [ "$(id -u)" -eq 0 ] || [ "$OS" = "darwin" ]; then
+  "$TARGET" -service install -connect "$CONNECT"
+else
+  exec "$TARGET" -connect "$CONNECT"
+fi
+`, connectURI, baseURL, url.QueryEscape(cred))
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(200)
+	_, _ = w.Write([]byte(script))
 }

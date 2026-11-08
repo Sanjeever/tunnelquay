@@ -57,9 +57,11 @@ type Server struct {
 	wg                sync.WaitGroup
 	closed            bool
 	TemporaryPassword string
-	historyMu         sync.Mutex
-	flushMu           sync.Mutex
-	finished          []store.Connection
+	historyMu          sync.Mutex
+	flushMu            sync.Mutex
+	finished           []store.Connection
+	releaseAPIURL      string
+	releaseDownloadURL string
 }
 
 func New(opts Options) (*Server, error) {

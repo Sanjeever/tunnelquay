@@ -10,8 +10,12 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/user"
@@ -21,7 +25,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sanjeever/tunnelquay/internal/buildinfo"
 	"github.com/Sanjeever/tunnelquay/internal/protocol"
+	"github.com/Sanjeever/tunnelquay/internal/transport"
 	"github.com/Sanjeever/tunnelquay/internal/update"
 )
 
@@ -300,4 +306,123 @@ func TestActualClientReplacementExitAndRestart(t *testing.T) {
 		}
 	}
 	t.Log("隔离客户端完成实际文件替换、退出、人工重新启动和原身份版本确认")
+}
+
+func TestAutoFetchUpgradeAndClientBinaryDistribution(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := update.PublicKey
+	update.PublicKey = base64.StdEncoding.EncodeToString(pub)
+	defer func() { update.PublicKey = previous }()
+
+	binaryName := "tunnelquay-client"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	binaryPayload := []byte("signed-client-binary-0.2.0")
+	var archive bytes.Buffer
+	z := zip.NewWriter(&archive)
+	entry, err := z.Create(binaryName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = entry.Write(binaryPayload); err != nil {
+		t.Fatal(err)
+	}
+	if err = z.Close(); err != nil {
+		t.Fatal(err)
+	}
+	binHash := sha256.Sum256(binaryPayload)
+	arcHash := sha256.Sum256(archive.Bytes())
+	artifact := update.Artifact{
+		Name:         "tunnelquay-client_0.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + ".zip",
+		Component:    "client",
+		OS:           runtime.GOOS,
+		Arch:         runtime.GOARCH,
+		Size:         int64(archive.Len()),
+		SHA256:       hex.EncodeToString(arcHash[:]),
+		Binary:       binaryName,
+		BinarySize:   int64(len(binaryPayload)),
+		BinarySHA256: hex.EncodeToString(binHash[:]),
+	}
+	manifestBytes, err := json.Marshal(update.Manifest{
+		Version:     "0.2.0",
+		ProtocolMin: protocol.Version,
+		ProtocolMax: protocol.Version,
+		Required:    []string{"upgrade-v1"},
+		Artifacts:   []update.Artifact{artifact},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigText := base64.StdEncoding.EncodeToString(ed25519.Sign(priv, manifestBytes)) + "\n"
+
+	releaseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/releases":
+			w.Write([]byte(`[{"tag_name":"v0.2.0","draft":false,"prerelease":false}]`))
+		case "/download/v0.2.0/release-manifest.json":
+			w.Write(manifestBytes)
+		case "/download/v0.2.0/release-manifest.sig":
+			w.Write([]byte(sigText))
+		case "/download/v0.2.0/" + artifact.Name:
+			w.Write(archive.Bytes())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer releaseServer.Close()
+
+	s := testServer(t)
+	s.releaseAPIURL = releaseServer.URL + "/releases"
+	s.releaseDownloadURL = releaseServer.URL + "/download"
+
+	id, _ := testClient(t, s)
+	prevVersion := buildinfo.Version
+	buildinfo.Version = "0.2.0"
+	defer func() { buildinfo.Version = prevVersion }()
+
+	unauthRes := httptest.NewRecorder()
+	s.clientInstallScript(unauthRes, httptest.NewRequest("GET", "/api/client/install.sh?credential=invalid", nil))
+	if unauthRes.Code != 401 {
+		t.Fatalf("无效凭据访问安装脚本应返回 401：%d", unauthRes.Code)
+	}
+
+	connectURI := transport.FormatConnect(s.Addr(), s.Identity.Credential())
+	scriptReq := httptest.NewRequest("GET", "/api/client/install.sh?connect="+url.QueryEscape(connectURI), nil)
+	scriptReq.Host = s.Addr()
+	scriptRes := httptest.NewRecorder()
+	s.clientInstallScript(scriptRes, scriptReq)
+	if scriptRes.Code != 200 || !strings.Contains(scriptRes.Body.String(), connectURI) || !strings.Contains(scriptRes.Body.String(), "/api/client/binary") {
+		t.Fatalf("一键安装脚本返回异常：%d %s", scriptRes.Code, scriptRes.Body.String())
+	}
+
+	upgradeReq := httptest.NewRequest("POST", "/api/devices/"+id+"/upgrades", strings.NewReader(`{"version":"0.2.0"}`))
+	upgradeReq.SetPathValue("id", id)
+	upgradeRes := httptest.NewRecorder()
+	s.createUpgrade(upgradeRes, upgradeReq)
+	if upgradeRes.Code != 200 {
+		t.Fatalf("未提前手动缓存时一键发起升级应自动拉取发行包：%d %s", upgradeRes.Code, upgradeRes.Body.String())
+	}
+	waitFor(t, func() bool {
+		var tasks []update.Task
+		if s.Store.All("upgrades", &tasks) != nil {
+			return false
+		}
+		return len(tasks) == 1 && tasks[0].Stage == "installed"
+	})
+
+	binReq := httptest.NewRequest("GET", fmt.Sprintf("/api/client/binary?os=%s&arch=%s&credential=%s", runtime.GOOS, runtime.GOARCH, url.QueryEscape(s.Identity.Credential())), nil)
+	binReq.Host = s.Addr()
+	binRes := httptest.NewRecorder()
+	s.clientBinary(binRes, binReq)
+	if binRes.Code != 200 {
+		t.Fatalf("从服务端下载已验证客户端程序失败：%d %s", binRes.Code, binRes.Body.String())
+	}
+	gotBinary, _ := io.ReadAll(binRes.Result().Body)
+	if !bytes.Equal(gotBinary, binaryPayload) {
+		t.Fatalf("下载的客户端程序内容不符：%q", string(gotBinary))
+	}
 }

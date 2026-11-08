@@ -94,6 +94,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/version", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]any{"version": buildinfo.Version, "commit": buildinfo.Commit, "protocol": protocol.Version})
 	})
+	mux.HandleFunc("GET /api/client/install.sh", s.clientInstallScript)
+	mux.HandleFunc("GET /api/client/binary", s.clientBinary)
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /api/auth/me", func(w http.ResponseWriter, r *http.Request) {
 		changed, err := s.Store.Get("password_changed")
