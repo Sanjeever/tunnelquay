@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -395,6 +396,46 @@ func TestLoginPasswordAndOrigin(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != 403 {
 		t.Fatal("应拒绝跨站写入")
+	}
+	settingsReq, _ := http.NewRequest("GET", base+"/api/settings", nil)
+	settingsReq.Header.Set("X-Forwarded-For", "203.0.113.55, 10.0.0.1")
+	res, err = h.Do(settingsReq)
+	if err != nil || res.StatusCode != 200 {
+		t.Fatal(err, res)
+	}
+	var settings map[string]any
+	if err = json.NewDecoder(res.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if settings["client_ip"] != "203.0.113.55" {
+		t.Fatalf("反向代理客户端 IP 识别错误：%v", settings["client_ip"])
+	}
+	newTemp, err := s.ResetPassword()
+	if err != nil || len(newTemp) != 20 {
+		t.Fatalf("重置管理密码失败：%v %q", err, newTemp)
+	}
+	res, err = h.Get(base + "/api/tunnels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 401 {
+		t.Fatalf("重置管理密码后旧会话应失效：%d", res.StatusCode)
+	}
+	if res = post("/api/auth/login", `{"password":"本地测试密码123456"}`); res.StatusCode != 401 {
+		t.Fatalf("重置后旧管理密码应失效：%d", res.StatusCode)
+	}
+	if res = post("/api/auth/login", fmt.Sprintf(`{"password":%q}`, newTemp)); res.StatusCode != 200 {
+		t.Fatalf("新临时密码登录失败：%d", res.StatusCode)
+	}
+	res, err = h.Get(base + "/api/tunnels")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 403 {
+		t.Fatalf("重置密码登录后应强制改密：%d", res.StatusCode)
 	}
 }
 

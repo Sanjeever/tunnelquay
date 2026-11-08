@@ -23,10 +23,19 @@ func run() error {
 	buildinfo.ConfigureHelp("tunnelquay-server")
 	listen := flag.String("listen", ":7000", "管理 HTTP 与客户端 TLS 共用的监听地址和端口")
 	dir := flag.String("data-dir", "data/server", "数据目录，保存数据库与服务端身份")
+	resetPassword := flag.Bool("reset-password", false, "重置管理密码为新的临时密码并退出")
 	version := flag.Bool("version", false, "显示版本")
 	flag.Parse()
 	if *version {
 		fmt.Println("TunnelQuay 服务端", buildinfo.Version, buildinfo.Commit)
+		return nil
+	}
+	if *resetPassword {
+		temp, err := server.ResetPassword(*dir)
+		if err != nil {
+			return err
+		}
+		fmt.Println("临时管理密码：", temp, "\n首次登录后请修改密码")
 		return nil
 	}
 	s, err := server.New(server.Options{Listen: *listen, DataDir: *dir})

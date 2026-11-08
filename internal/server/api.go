@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -46,16 +47,47 @@ func (s *Server) initAdmin() error {
 	if password != "" {
 		return nil
 	}
-	temp := transport.RandomID()[:20]
-	hash, err := bcrypt.GenerateFromPassword([]byte(temp), bcrypt.DefaultCost)
+	temp, err := resetPasswordStore(s.Store)
 	if err != nil {
-		return err
-	}
-	if err = s.Store.Set("admin_hash", string(hash)); err != nil {
 		return err
 	}
 	s.TemporaryPassword = temp
 	return nil
+}
+func ResetPassword(dataDir string) (string, error) {
+	db, err := store.Open(dataDir)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	return resetPasswordStore(db)
+}
+func resetPasswordStore(db *store.Store) (string, error) {
+	temp := transport.RandomID()[:20]
+	hash, err := bcrypt.GenerateFromPassword([]byte(temp), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	if err = db.Set("admin_hash", string(hash)); err != nil {
+		return "", err
+	}
+	if err = db.Set("password_changed", "false"); err != nil {
+		return "", err
+	}
+	return temp, nil
+}
+func (s *Server) ResetPassword() (string, error) {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	temp, err := resetPasswordStore(s.Store)
+	if err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	clear(s.sessions)
+	s.TemporaryPassword = temp
+	s.mu.Unlock()
+	return temp, nil
 }
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", s.login)
@@ -120,6 +152,32 @@ func checkOrigin(r *http.Request) bool {
 	}
 	u, err := url.Parse(origin)
 	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host == r.Host
+}
+func requestClientIP(r *http.Request) string {
+	host := strings.TrimSpace(r.RemoteAddr)
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		host = h
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return host
+	}
+	addr = addr.Unmap()
+	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			for _, part := range strings.Split(xff, ",") {
+				if forwarded, e := netip.ParseAddr(strings.TrimSpace(part)); e == nil {
+					return forwarded.Unmap().String()
+				}
+			}
+		}
+		if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" {
+			if forwarded, e := netip.ParseAddr(realIP); e == nil {
+				return forwarded.Unmap().String()
+			}
+		}
+	}
+	return addr.String()
 }
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -376,10 +434,7 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	clientIP := ""
-	if h, _, e := net.SplitHostPort(r.RemoteAddr); e == nil {
-		clientIP = h
-	}
+	clientIP := requestClientIP(r)
 	s.mu.RLock()
 	cred := s.Identity.Credential()
 	s.mu.RUnlock()

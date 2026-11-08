@@ -157,7 +157,8 @@ func TestRestartRecoversIdentityPortsAndLatestConfig(t *testing.T) {
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		r := s.running[tun.ID]
-		return r != nil && r.cfg.TargetPort == updated.TargetPort
+		current := s.tunnels[tun.ID]
+		return r != nil && r.cfg.TargetPort == updated.TargetPort && current != nil && current.TargetStatus == "reachable"
 	})
 	conn := dialTunnel(t, tun.PublicPort)
 	b := make([]byte, len("新"))

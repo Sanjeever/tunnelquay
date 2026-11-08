@@ -314,11 +314,12 @@ func (s *Server) reconcileDevice(id string) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	p := s.peers[id]
 	if p == nil || s.devices[id].Revoked {
+		s.mu.Unlock()
 		return
 	}
+	var probeIDs []string
 	for _, t := range s.tunnels {
 		if t.DeviceID != id || !t.Enabled || s.running[t.ID] != nil {
 			continue
@@ -335,6 +336,12 @@ func (s *Server) reconcileDevice(id string) {
 		_ = s.Store.Put("tunnels", t.ID, *t)
 		s.running[t.ID] = r
 		s.startRuntime(r, p)
+		probeIDs = append(probeIDs, t.ID)
+	}
+	s.mu.Unlock()
+	for _, tid := range probeIDs {
+		tunnelID := tid
+		s.wg.Go(func() { _, _ = s.ProbeTunnel(tunnelID) })
 	}
 }
 
