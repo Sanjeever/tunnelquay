@@ -31,10 +31,21 @@ func run() error {
 	port := flag.Int("port", 0, "服务端接入端口")
 	credential := flag.String("credential", os.Getenv("TUNNELQUAY_CREDENTIAL"), "包含登记秘密和服务端指纹的接入凭据")
 	dir := flag.String("data-dir", "", "设备私钥目录，默认用户配置目录下的 tunnelquay")
+	service := flag.String("service", "", "管理系统常驻服务：install（安装并启动）或 uninstall（停止并卸载）")
 	version := flag.Bool("version", false, "显示版本")
 	flag.Parse()
 	if *version {
 		fmt.Println("TunnelQuay 客户端", buildinfo.Version, buildinfo.Commit)
+		return nil
+	}
+	if *service != "" && *service != "install" && *service != "uninstall" {
+		return errors.New("不支持的服务操作，请使用 install 或 uninstall")
+	}
+	if *service == "uninstall" {
+		if err := client.ManageService("uninstall", client.Options{}); err != nil {
+			return err
+		}
+		fmt.Println("已卸载客户端常驻服务")
 		return nil
 	}
 	var targetAddr, targetCred string
@@ -58,6 +69,13 @@ func run() error {
 			return err
 		}
 		*dir = filepath.Join(config, "tunnelquay")
+	}
+	if *service != "" {
+		if err := client.ManageService(*service, client.Options{Address: targetAddr, Credential: targetCred, DataDir: *dir}); err != nil {
+			return err
+		}
+		fmt.Println("已安装并启动客户端常驻服务")
+		return nil
 	}
 	c, err := client.New(client.Options{Address: targetAddr, Credential: targetCred, DataDir: *dir})
 	if err != nil {
