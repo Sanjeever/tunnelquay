@@ -12,9 +12,9 @@ Go 版本要求见 [go.mod](../go.mod)，前端依赖见 [web/package.json](../w
 
 ## 前台运行
 
-服务端与客户端启动命令见 [README 从源码开始](../README.md#从源码开始)，完整参数与默认值见 [服务端入口](../cmd/tunnelquay-server/main.go) 与 [客户端入口](../cmd/tunnelquay-client/main.go)（或执行 `-h`）。多客户端实例需通过 `-data-dir` 指定各自的身份目录。进程收到中断或 SIGTERM 后清理退出。开放接入和业务映射端口由用户自行配置防火墙。
+服务端与客户端启动命令见 [README 从源码开始](../README.md#从源码开始)，完整参数与默认值见 [服务端入口](../cmd/tunnelquay-server/main.go) 与 [客户端入口](../cmd/tunnelquay-client/main.go)（或执行 `-h`）。忘记管理密码时可执行 `./bin/tunnelquay-server -data-dir data/server -reset-password` 生成新临时密码。客户端可通过 `-service install -connect 'tq://...'` 安装并启动系统常驻服务（Linux `systemd`、macOS `launchd`、Windows 计划任务），或通过 `-service uninstall` 卸载；多客户端实例需通过 `-data-dir` 指定各自的身份目录。进程收到中断或 SIGTERM 后清理退出。开放接入和业务映射端口由用户自行配置防火墙。
 
-Web 反向代理转发 HTTP 到服务端监听端口，保留 Host，并在 HTTPS 入口设置 `X-Forwarded-Proto: https`。客户端直连公网 IP 或域名和接入端口，不经过 HTTP 反向代理。未保存客户端接入地址时，默认由当前请求主机名与服务端监听端口推导；若经反向代理访问且浏览器域名不能直接用于客户端 TCP 接入，需在设置中保存客户端直连的 `主机:端口`。
+Web 反向代理转发 HTTP 到服务端监听端口，保留 Host，并在 HTTPS 入口设置 `X-Forwarded-Proto: https` 与 `X-Forwarded-For`（或 `X-Real-IP`）。客户端直连公网 IP 或域名和接入端口，不经过 HTTP 反向代理。未保存客户端接入地址时，默认由当前请求主机名与服务端监听端口推导；若经反向代理访问且浏览器域名不能直接用于客户端 TCP 接入，需在设置中保存客户端直连的 `主机:端口`。
 
 备份时先停止服务端，再复制完整数据目录（包含 SQLite、`identity.json` 与发行包缓存）；身份文件丢失会使现有凭据失效。恢复时使用同一目录。客户端升级和重启保留完整身份目录（包含 `device-key.pem` 私钥）；私钥备份应放在受保护的位置。
 
@@ -43,9 +43,9 @@ bash scripts/test-slow-link.sh recovery
 
 ## 客户端升级
 
-在设备页打开“客户端升级”，选择设备。展开“发行包”可查询官方版本并下载，或导入对应的 `release-manifest.json`、`release-manifest.sig` 与客户端归档。缓存通过签名验证后才成为升级候选。选择版本后发起任务。
+在设备页打开“客户端升级”，选择设备。面板会自动查询官方可用版本；直接选择目标版本并发起升级时，若服务端尚未缓存对应平台的发行包，会自动从官方 Release 下载并验证签名后下发。也可展开“发行包”手动预下载，或导入对应的 `release-manifest.json`、`release-manifest.sig` 与客户端归档。缓存通过签名验证后才成为升级候选。
 
-升级成功后客户端退出码为 0。Linux 外部守护应采用 `Restart=always`，避免 `Restart=on-failure` 跳过正常退出后的重启。前台运行需手动再次执行原接入命令。Windows 可使用用户已有守护工具，macOS 可使用用户配置的 launchd；项目不安装系统服务。新版启动失败需人工替换程序，保留身份目录。
+升级成功后客户端退出码为 0。使用 `-service install` 安装的常驻服务（或配置 `Restart=always` 的外部守护）会自动拉起新版进程；前台运行需手动再次执行原接入命令。新版启动失败需人工替换程序，保留身份目录。
 
 发行工具将公钥注入构建变量 `github.com/Sanjeever/tunnelquay/internal/update.PublicKey`，配置来源见下节。普通开发构建没有该公钥，会拒绝远程升级验证。Windows 运行中的旧文件可能保留为隐藏的 `.tunnelquay-client.exe.old`，确认新版可用且旧进程退出后可人工清理。
 
@@ -53,7 +53,7 @@ bash scripts/test-slow-link.sh recovery
 
 ## 版本与发行
 
-`node scripts/version.mjs print` 读取唯一版本来源。`node scripts/version.mjs check` 校验版本及中文日志，附加标签参数如 `v0.1.0` 时校验一致性。升级版本前先编写对应 `docs/releases/<version>.md`，然后执行 `node scripts/version.mjs bump patch`，也可指定 `minor`、`major` 或完整 SemVer。缺少日志时不修改版本文件。
+`node scripts/version.mjs print` 读取唯一版本来源。`node scripts/version.mjs check` 校验版本及中文日志，附加标签参数如 `v0.99.0` 时校验一致性。升级版本前先编写对应 `docs/releases/<version>.md`，然后执行 `node scripts/version.mjs bump patch`，也可指定 `minor`、`major` 或完整 SemVer。缺少日志时不修改版本文件。
 
 完成前端构建后执行 `go run ./scripts/release -test-key -output bin/validation-release`，构建 [发行工具](../scripts/release/main.go) 中的平台矩阵，输出各平台客户端与服务端归档、清单、签名、校验文件与测试公钥标记。输出目录必须为空。执行 `node scripts/publish.mjs --check-test bin/validation-release` 校验测试附件。测试私钥只在构建进程内存中存在；这些附件不得作为正式发行包。
 
