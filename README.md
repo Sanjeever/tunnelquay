@@ -4,6 +4,22 @@ TunnelQuay 是面向个人自托管的 TCP、UDP 内网穿透工具。通过服�
 
 已实现独立服务端、客户端与中文管理界面。平台验证范围、已确认缺陷和公网稳定性缺口见 [验收记录](docs/verification.md)。
 
+## 界面预览
+
+截图中的公网 IP 与接入地址已遮盖。
+
+设备列表
+
+![设备列表，显示在线状态、平台、版本与 RTT](docs/screenshots/devices.png)
+
+新建隧道（SSH 预设，尚未保存）
+
+![新建隧道表单，包含协议、目标地址、公网端口与来源白名单](docs/screenshots/new-tunnel.png)
+
+接入与端口设置
+
+![设置页，包含客户端接入地址、自动端口范围与管理密码设置](docs/screenshots/settings.png)
+
 ## 从源码开始
 
 工具链与环境要求见 [开发准备](docs/development.md#开发)。先构建前端，再构建两个程序。
