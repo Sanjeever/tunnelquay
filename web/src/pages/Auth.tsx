@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { BrandMark, ErrorMessage } from "../components/common";
@@ -74,6 +75,11 @@ export function Auth({
           <ErrorMessage message={error} />
           <Button disabled={busy} type="submit">
             {busy ? "正在提交…" : mustChange ? "保存密码" : "登录"}
+            {busy ? (
+              <Loader2 size={14} className="spin" aria-hidden="true" />
+            ) : (
+              <ArrowRight size={14} aria-hidden="true" />
+            )}
           </Button>
         </form>
       </section>

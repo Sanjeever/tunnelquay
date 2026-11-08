@@ -105,6 +105,11 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
     .getByLabel("新密码", { exact: true })
     .fill("browser-test-password-123");
   await page.getByRole("button", { name: "保存密码" }).click();
+  await expect(page.locator(".brand svg.brand-mark")).toBeVisible();
+  await page.getByRole("radio", { name: "深色主题" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("radio", { name: "浅色主题" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await page.getByRole("link", { name: "设备", exact: true }).click();
   await expect(page.getByText("在线", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "接入设备", exact: true }).click();
@@ -227,12 +232,19 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
     page.getByRole("button", { name: "已编辑隧道", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "已编辑隧道", exact: true }).click();
+  await expect(page.locator("dialog.drawer[open]")).toBeVisible();
   await expect(page.getByText("可达", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "探测目标", exact: true }).click();
   await expect(page.getByText("可达", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "查看连接" }).click();
   await page.getByRole("tab", { name: "历史记录" }).click();
   await expect(page.locator("tbody tr")).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "浏览器验收隧道", exact: true })
+    .click();
+  await expect(page.locator("dialog.drawer[open]")).toBeVisible();
+  await page.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(page.locator("dialog.drawer[open]")).toHaveCount(0);
   await page.getByLabel("来源 IP", { exact: true }).fill("192.0.2.254");
   await page.getByRole("button", { name: "筛选", exact: true }).click();
   await expect(page.getByText("暂无连接记录")).toBeVisible();

@@ -116,7 +116,7 @@ export const protocolName = (value: string) =>
 export const time = (value: string | null) =>
   value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
 export function bytes(value: number) {
-  if (value < 1024) return `${value} B`;
+  if (value < 1024) return `${Math.round(value)} B`;
   const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), 3);
   return `${(value / 1024 ** unit).toFixed(1)} ${["B", "KB", "MB", "GB"][unit]}`;
 }

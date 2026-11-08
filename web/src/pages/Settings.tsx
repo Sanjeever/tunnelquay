@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Check, Loader2 } from "lucide-react";
 import { api, useLoad, type Settings as SettingsData } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { ErrorMessage } from "../components/common";
@@ -117,6 +118,11 @@ export function Settings() {
               <ErrorMessage message={error} />
               <div className="actions">
                 <Button type="submit" disabled={busy}>
+                  {busy ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : saved ? (
+                    <Check size={14} className="icon-pop" />
+                  ) : null}
                   {busy ? "正在保存…" : saved ? "已保存" : "保存设置"}
                 </Button>
                 <Button
@@ -125,6 +131,7 @@ export function Settings() {
                   disabled={busy}
                   onClick={() => void rotateCredential()}
                 >
+                  {rotated && <Check size={14} className="good icon-pop" />}
                   {rotated ? "已重置凭据" : "重置接入凭据"}
                 </Button>
               </div>
@@ -156,6 +163,7 @@ export function Settings() {
             </label>
             <ErrorMessage message={passwordError} />
             <Button type="submit" variant="outline">
+              {passwordSaved && <Check size={14} className="good icon-pop" />}
               {passwordSaved ? "已修改" : "修改密码"}
             </Button>
           </form>

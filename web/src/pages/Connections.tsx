@@ -10,7 +10,7 @@ import {
   type Tunnel,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { Empty, ErrorMessage, Modal, State } from "../components/common";
+import { Drawer, Empty, ErrorMessage, State } from "../components/common";
 
 interface Result {
   items: Connection[];
@@ -206,11 +206,22 @@ export function Connections() {
         </Button>
       </div>
       {detail && (
-        <Modal title="连接详情" close={() => setDetail(null)}>
+        <Drawer
+          title="连接详情"
+          subtitle={`${detail.tunnel_name} · ${detail.device_name}`}
+          close={() => setDetail(null)}
+        >
           <dl className="details">
+            <div className="detail-row">
+              <dt>状态</dt>
+              <dd>
+                <State value={detail.result} />
+              </dd>
+            </div>
             {[
               ["隧道", detail.tunnel_name],
               ["设备", detail.device_name],
+              ["协议", protocolName(detail.protocol)],
               ["来源", detail.source],
               ["当时目标", detail.target],
               ["开始时间", time(detail.started)],
@@ -220,11 +231,21 @@ export function Connections() {
             ].map(([name, value]) => (
               <div className="detail-row" key={name}>
                 <dt>{name}</dt>
-                <dd>{value}</dd>
+                <dd
+                  className={
+                    name === "来源" ||
+                    name === "当时目标" ||
+                    name === "流量 ↑ / ↓"
+                      ? "mono"
+                      : undefined
+                  }
+                >
+                  {value}
+                </dd>
               </div>
             ))}
           </dl>
-        </Modal>
+        </Drawer>
       )}
     </>
   );

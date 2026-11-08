@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Loader2 } from "lucide-react";
 import { api, time, useLoad, type Device } from "../lib/api";
 import { Button } from "./ui/button";
 import { ErrorMessage, Modal } from "./common";
@@ -186,6 +187,7 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
           type="submit"
           disabled={busy || !device.online || !candidateVersions.length}
         >
+          {busy && <Loader2 size={14} className="spin" />}
           {busy ? "正在处理…" : "发起升级"}
         </Button>
       </form>

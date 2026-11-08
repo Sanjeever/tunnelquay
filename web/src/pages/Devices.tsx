@@ -1,6 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { Copy, Pencil, Plus, ArrowUpRight, Ban, Trash2 } from "lucide-react";
+import {
+  Copy,
+  Check,
+  Pencil,
+  Plus,
+  ArrowUpRight,
+  Ban,
+  Trash2,
+} from "lucide-react";
 import { api, time, useLoad, type Device, type Settings } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Empty, ErrorMessage, Modal, State } from "../components/common";
@@ -307,7 +315,11 @@ export function Devices() {
                     }
                   }}
                 >
-                  <Copy size={14} />
+                  {unitCopied ? (
+                    <Check size={14} className="good icon-pop" />
+                  ) : (
+                    <Copy size={14} className="icon-pop" />
+                  )}
                   {unitCopied ? "已复制服务配置" : "复制服务配置"}
                 </Button>
               </div>
@@ -325,7 +337,11 @@ export function Devices() {
                 }
               }}
             >
-              <Copy size={14} />
+              {copied ? (
+                <Check size={14} className="good icon-pop" />
+              ) : (
+                <Copy size={14} className="icon-pop" />
+              )}
               {copied ? "已复制" : "复制命令"}
             </Button>
           </footer>

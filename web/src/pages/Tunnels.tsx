@@ -6,7 +6,9 @@ import {
   ArrowUpRight,
   Trash2,
   Copy,
+  Check,
   Activity,
+  Loader2,
 } from "lucide-react";
 import {
   api,
@@ -18,7 +20,14 @@ import {
   type Tunnel,
 } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { Empty, ErrorMessage, Modal, State } from "../components/common";
+import {
+  CopyAction,
+  Drawer,
+  Empty,
+  ErrorMessage,
+  Modal,
+  State,
+} from "../components/common";
 
 const PRESETS = [
   { label: "SSH (22)", name: "SSH", protocol: "tcp", port: 22 },
@@ -191,8 +200,12 @@ export function Tunnels() {
                     {publicHost ? (
                       <button
                         type="button"
-                        className="text-button mono"
-                        title={`复制 ${publicHost}:${t.public_port}`}
+                        className="text-button mono port-copy-btn"
+                        title={
+                          copiedPort === t.id
+                            ? "已复制"
+                            : `复制 ${publicHost}:${t.public_port}`
+                        }
                         onClick={async () => {
                           try {
                             await navigator.clipboard.writeText(
@@ -205,10 +218,14 @@ export function Tunnels() {
                           }
                         }}
                       >
-                        {t.public_port}
-                        {copiedPort === t.id && (
-                          <span className="muted small"> 已复制</span>
-                        )}
+                        <span>{t.public_port}</span>
+                        <span className="port-copy-icon" aria-hidden="true">
+                          {copiedPort === t.id ? (
+                            <Check size={13} className="good icon-pop" />
+                          ) : (
+                            <Copy size={13} className="icon-pop" />
+                          )}
+                        </span>
                       </button>
                     ) : (
                       t.public_port
@@ -490,6 +507,7 @@ export function Tunnels() {
                 取消
               </Button>
               <Button type="submit" disabled={busy}>
+                {busy && <Loader2 size={14} className="spin" />}
                 {busy ? "正在保存…" : "保存"}
               </Button>
             </footer>
@@ -497,7 +515,44 @@ export function Tunnels() {
         </Modal>
       )}
       {detail && (
-        <Modal title={detail.name} close={() => setDetail(null)}>
+        <Drawer
+          title={detail.name}
+          subtitle={names.get(detail.device_id)}
+          close={() => setDetail(null)}
+          footer={
+            <>
+              {publicHost && (
+                <CopyAction
+                  value={`${publicHost}:${detail.public_port}`}
+                  label="复制公网地址"
+                  copiedLabel="已复制地址"
+                />
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={probing === detail.id}
+                onClick={() => void probe(detail.id)}
+              >
+                {probing === detail.id ? (
+                  <Loader2 size={14} className="spin" />
+                ) : (
+                  <Activity size={14} />
+                )}
+                {probing === detail.id ? "正在探测…" : "探测目标"}
+              </Button>
+              <Button asChild variant="outline">
+                <Link
+                  to={`/connections?tunnel_id=${detail.id}`}
+                  onClick={() => setDetail(null)}
+                >
+                  查看连接
+                  <ArrowUpRight size={14} />
+                </Link>
+              </Button>
+            </>
+          }
+        >
           <dl className="details">
             <dt>监听</dt>
             <dd>
@@ -514,53 +569,20 @@ export function Tunnels() {
             </dd>
             <dt>来源白名单</dt>
             <dd className="mono">{detail.allow_cidrs || "全部允许"}</dd>
+            <dt>当前连接</dt>
+            <dd className="mono">{detail.connections}</dd>
+            <dt>实时速率 ↑ / ↓</dt>
+            <dd className="mono">
+              {bytes(detail.up_rate)}/s / {bytes(detail.down_rate)}/s
+            </dd>
             <dt>累计流量 ↑ / ↓</dt>
-            <dd>
+            <dd className="mono">
               {bytes(detail.up)} / {bytes(detail.down)}
             </dd>
           </dl>
           <ErrorMessage message={detail.error} />
           <ErrorMessage message={detail.target_error} />
-          <footer>
-            {publicHost && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={async () => {
-                  try {
-                    await navigator.clipboard.writeText(
-                      `${publicHost}:${detail.public_port}`,
-                    );
-                    setCopiedPort(detail.id);
-                  } catch {
-                    /* ignore */
-                  }
-                }}
-              >
-                <Copy size={14} />
-                {copiedPort === detail.id ? "已复制地址" : "复制公网地址"}
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={probing === detail.id}
-              onClick={() => void probe(detail.id)}
-            >
-              <Activity size={14} />
-              {probing === detail.id ? "正在探测…" : "探测目标"}
-            </Button>
-            <Button asChild variant="outline">
-              <Link
-                to={`/connections?tunnel_id=${detail.id}`}
-                onClick={() => setDetail(null)}
-              >
-                查看连接
-                <ArrowUpRight size={14} />
-              </Link>
-            </Button>
-          </footer>
-        </Modal>
+        </Drawer>
       )}
     </>
   );

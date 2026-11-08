@@ -42,7 +42,7 @@
 
 ## 管理界面
 
-产品属于开发者工具后台。参考 [Refero Vercel](https://styles.refero.design/style/f24daf3a-d43f-4dec-85a9-8ac1d5148a03)，采用紧凑管理表格布局。四个入口为隧道、设备、连接、设置；状态色用于真实在线、错误和 RTT。表单保留标签、键盘焦点和操作位置的错误反馈，视觉参数见 [style.css](../web/src/style.css)。
+产品属于开发者工具后台。参考 [Refero Vercel](https://styles.refero.design/style/f24daf3a-d43f-4dec-85a9-8ac1d5148a03)，采用紧凑管理表格布局，支持跟随系统、浅色与深色主题切换（[theme.tsx](../web/src/lib/theme.tsx)）。四个入口为隧道、设备、连接、设置；隧道与连接详情通过右侧抽屉展示（[common.tsx](../web/src/components/common.tsx)），状态色用于真实在线、错误和 RTT。表单保留标签、键盘焦点和操作位置的错误反馈，视觉参数见 [style.css](../web/src/style.css)。
 
 ## 配置切换
 
