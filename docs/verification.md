@@ -15,7 +15,7 @@
 4. 完善客户端 CLI 与管理端闭环：支持单一接入串（`-connect tq://<credential>@<host>:<port>`）与环境变量（`TUNNELQUAY_CONNECT` / `TUNNELQUAY_CREDENTIAL`），接入地址自动推导填充与 `systemd` 常驻配置生成，离线/已撤销设备删除与关联隧道清理，共享登记凭据重置，服务端目标即时连通性探测（`POST /api/tunnels/{id}/probe`），以及按隧道配置来源 IP / CIDR 白名单过滤（`allow_cidrs`）。
 
 验证环境与结果：
-- **macOS arm64（Go 1.26.0）**：执行 `go test ./... -count=1`、`go vet ./...`、`pnpm --dir web build` 与 `pnpm --dir web exec playwright test --headed` 全部通过。覆盖 Ed25519 设备密钥认证、拒绝冒领与重放、身份撤销、离线/已撤销设备删除、共享登记凭据重置（新设备旧凭据被拒、已绑定设备不受影响）、单一接入连接串解析与格式化、TCP 双向流与半关闭、UDP 多来源 8192 字节回包、配置切换与端口冲突保留原配置、主动目标探测（TCP / UDP / 组合协议）、来源 IP / CIDR 白名单放行与拦截、未知控制请求返回 `unsupported_message`、代表性负载、单进程升级实际文件替换与重启版本确认，以及真实 Chromium 桌面与 390px 窄屏界面验收。
+- **macOS arm64（Go 1.26.0）**：执行 `go test ./... -count=1`、`go vet ./...`、`pnpm --dir web build` 与 `pnpm --dir web exec playwright test --headed` 全部通过。覆盖 Ed25519 设备密钥认证、拒绝冒领与重放、身份撤销、离线/已撤销设备删除、共享登记凭据重置（新设备旧凭据被拒、已绑定设备不受影响）、单一接入连接串解析与格式化、TCP 双向流与半关闭、UDP 多来源 8192 字节回包、配置切换与端口冲突保留原配置、主动目标探测、来源 IP / CIDR 白名单放行与拦截、未知控制请求返回 `unsupported_message`、代表性负载、单进程升级实际文件替换与重启版本确认，以及真实 Chromium 桌面与 390px 窄屏界面验收。
 - **Linux amd64（tyk1，139.180.203.137）**：交叉编译 `client.test` 与 `server.test` 上传至隔离目录原生执行通过，包含三个来源的 8192 字节与 65507 字节最大 UDP 数据报回包验证，测试结束后清理全部临时文件与监听。
 
 ## 功能与证据

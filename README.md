@@ -28,15 +28,11 @@ Windows 使用 `.\bin\tunnelquay-server.exe`，参数相同。首次启动会显
 ./bin/tunnelquay-client -connect 'tq://替换为接入凭据@203.0.113.10:7000'
 ```
 
-Windows 使用 `.\bin\tunnelquay-client.exe`。客户端同时支持通过环境变量 `TUNNELQUAY_CONNECT` 传入连接串，以及传统的 `-address`、`-port`、`-credential` 参数，设备页弹窗内置 Linux `systemd` 常驻服务配置片段。身份私钥保存在用户配置目录，使用 `-data-dir` 可指定独立目录。设备上线后即可在面板创建隧道。
-
-源码开发构建显示版本 `dev`；发行工具从 `web/package.json` 读取版本并注入两个程序。正式构建和升级签名配置见 [开发与部署](docs/development.md)。
+Windows 使用 `.\bin\tunnelquay-client.exe`。客户端还支持环境变量 `TUNNELQUAY_CONNECT` 或拆分参数 `-address`、`-port`、`-credential`，完整参数与默认值见 [客户端入口](cmd/tunnelquay-client/main.go) 与 [服务端入口](cmd/tunnelquay-server/main.go)。设备上线后即可在面板创建隧道，正式构建与常驻部署见 [开发与部署](docs/development.md)。
 
 ## 使用方式
 
-在公网服务器以前台方式启动服务端，在 Linux、macOS 或 Windows 设备上启动客户端。客户端自动登记设备并保存身份。之后通过 Web 选择设备，创建、修改、启停和删除隧道。
-
-所有隧道配置保存在服务端，客户端保持无状态并按服务端拨号原语转发流量。修改映射无需登录客户端设备，新功能演进集中在服务端。
+服务端与客户端均以前台方式运行，常驻由外部守护管理。所有隧道配置保存在服务端，客户端保持无状态并按服务端拨号原语转发流量，修改映射无需登录客户端设备。
 
 | 能力 | 已实现行为 |
 | --- | --- |
@@ -50,17 +46,11 @@ Windows 使用 `.\bin\tunnelquay-client.exe`。客户端同时支持通过环境
 | 连接记录 | 来源地址、起止时间、流量、结果，保留与清理规则见 [历史与观测](docs/design.md#历史与观测) |
 | 客户端升级 | Web 发起，验证签名和替换程序后退出，重新上线确认实际版本；需要配置正式发行公钥 |
 
-服务端以单个 TCP 端口同时提供管理 HTTP 与客户端 TLS 接入，业务映射使用额外的公网端口。管理界面通过 HTTP 访问，域名和 HTTPS 由用户自行配置反向代理。客户端直接连接服务端 IP 和端口，接入链路独立加密并验证服务端身份。
-
-客户端与服务端都以前台方式运行，用户自行配置常驻。升级完成后由外部守护或人工重启客户端，升级失败由人工恢复。
-
-客户端使用本地独立密钥证明设备身份，设备页支持随时撤销设备身份。操作步骤见 [身份与撤销](docs/development.md#身份与撤销)。
+服务端以单个 TCP 端口同时提供管理 HTTP 与客户端 TLS 接入，业务映射监听额外公网端口。Web 域名与 HTTPS 由用户反向代理处理；客户端直连服务端并独立校验服务端证书公钥指纹。
 
 ## 技术与目录
 
-后端采用 Go 与 SQLite，客户端和服务端分别构建。管理端采用 React、TypeScript、Vite、React Router、shadcn/ui、Tailwind CSS，按 Refero 参考设计。前端构建产物嵌入服务端二进制。
-
-主要目录如下。
+后端采用 Go 与 SQLite（`modernc.org/sqlite`），客户端和服务端分别构建。管理端采用 React、TypeScript、Vite、React Router、shadcn/ui、Tailwind CSS，构建产物嵌入服务端二进制。
 
 ```text
 cmd/
@@ -72,6 +62,7 @@ internal/
   protocol/            消息、版本、能力协商与 UDP 封包
   transport/           TLS + Yamux 复用会话与证书固定
   store/               SQLite 存储与历史清理
+  update/              发行清单签名校验与归档解包
   webui/               管理端资源嵌入
   buildinfo/           程序版本与构建信息
 web/                   React 管理端
@@ -79,8 +70,6 @@ docs/                  设计、开发与版本日志
 scripts/               版本及必要构建工具
 .github/workflows/     持续集成与发布
 ```
-
-Go Module 为 `github.com/Sanjeever/tunnelquay`。前端依赖通过 pnpm 管理，SQLite 使用 `modernc.org/sqlite`。
 
 ## 开发与发布
 
