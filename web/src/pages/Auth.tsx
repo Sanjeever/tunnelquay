@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { ErrorMessage } from "../components/common";
+import { BrandMark, ErrorMessage } from "../components/common";
 
 export function Auth({
   mustChange,
@@ -41,7 +41,10 @@ export function Auth({
   return (
     <div className="auth-wrap">
       <section className="auth">
-        <div className="wordmark">TunnelQuay</div>
+        <div className="wordmark">
+          <BrandMark size={30} />
+          <span>TunnelQuay</span>
+        </div>
         <h1>{mustChange ? "修改临时密码" : "登录管理端"}</h1>
         <form onSubmit={submit}>
           {mustChange && (

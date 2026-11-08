@@ -7,15 +7,53 @@ import {
   ArrowLeftRight,
   Settings as SettingsIcon,
   LogOut,
+  Sun,
+  Moon,
+  Laptop,
+  Loader2,
 } from "lucide-react";
 import { api } from "./lib/api";
+import { ThemeProvider, useTheme, type ThemeMode } from "./lib/theme";
 import { Button } from "./components/ui/button";
+import { BrandMark } from "./components/common";
 import { Auth } from "./pages/Auth";
 import { Tunnels } from "./pages/Tunnels";
 import { Devices } from "./pages/Devices";
 import { Connections } from "./pages/Connections";
 import { Settings } from "./pages/Settings";
 import "./style.css";
+
+const THEME_OPTIONS: Array<{
+  mode: ThemeMode;
+  label: string;
+  Icon: typeof Sun;
+}> = [
+  { mode: "system", label: "跟随系统", Icon: Laptop },
+  { mode: "light", label: "浅色主题", Icon: Sun },
+  { mode: "dark", label: "深色主题", Icon: Moon },
+];
+
+function ThemeSwitcher() {
+  const { mode, setMode } = useTheme();
+  return (
+    <div className="theme-switch" role="radiogroup" aria-label="外观主题">
+      {THEME_OPTIONS.map(({ mode: itemMode, label, Icon }) => (
+        <button
+          key={itemMode}
+          type="button"
+          role="radio"
+          aria-checked={mode === itemMode}
+          aria-label={label}
+          title={label}
+          className={`theme-option${mode === itemMode ? " active" : ""}`}
+          onClick={() => setMode(itemMode)}
+        >
+          <Icon size={14} />
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function App() {
   const [auth, setAuth] = useState<"loading" | "login" | "change" | "ready">(
@@ -30,7 +68,14 @@ function App() {
     return () => window.removeEventListener("session-expired", expired);
   }, []);
   if (auth === "loading")
-    return <div className="auth-wrap muted">正在加载…</div>;
+    return (
+      <div className="auth-wrap muted">
+        <span className="loading-inline" role="status">
+          <Loader2 size={16} className="spin" />
+          正在加载…
+        </span>
+      </div>
+    );
   if (auth !== "ready")
     return (
       <Auth
@@ -42,8 +87,11 @@ function App() {
   return (
     <div className="shell">
       <aside>
-        <strong>TunnelQuay</strong>
-        <nav>
+        <div className="brand">
+          <BrandMark size={26} />
+          <strong>TunnelQuay</strong>
+        </div>
+        <nav aria-label="主导航">
           {[
             ["隧道", "/", Cable],
             ["设备", "/devices", Monitor],
@@ -60,6 +108,7 @@ function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
+          <ThemeSwitcher />
           <Button
             variant="ghost"
             onClick={async () => {
@@ -87,8 +136,10 @@ function App() {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <ThemeProvider>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </ThemeProvider>
   </React.StrictMode>,
 );
