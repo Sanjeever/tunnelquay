@@ -59,7 +59,11 @@ function App() {
   const [auth, setAuth] = useState<"loading" | "login" | "change" | "ready">(
     "loading",
   );
+  const [serverVersion, setServerVersion] = useState("");
   useEffect(() => {
+    api<{ version: string }>("/version")
+      .then((r) => setServerVersion(r.version))
+      .catch(() => {});
     api<{ must_change_password: boolean }>("/auth/me")
       .then((r) => setAuth(r.must_change_password ? "change" : "ready"))
       .catch(() => setAuth("login"));
@@ -90,6 +94,11 @@ function App() {
         <div className="brand">
           <BrandMark size={26} />
           <strong>TunnelQuay</strong>
+          {serverVersion && (
+            <span className="brand-version mono" title={`服务端版本 ${serverVersion}`}>
+              v{serverVersion}
+            </span>
+          )}
         </div>
         <nav aria-label="主导航">
           {[
@@ -124,7 +133,10 @@ function App() {
       <main>
         <Routes>
           <Route path="/" element={<Tunnels />} />
-          <Route path="/devices" element={<Devices />} />
+          <Route
+            path="/devices"
+            element={<Devices serverVersion={serverVersion} />}
+          />
           <Route path="/connections" element={<Connections />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Tunnels />} />

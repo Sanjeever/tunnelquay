@@ -125,6 +125,11 @@ aside strong {
   letter-spacing: -0.4px;
   color: var(--foreground);
 }
+.brand-version {
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: auto;
+}
 nav {
   display: grid;
   gap: 4px;
@@ -844,6 +849,46 @@ details[open] > summary::after {
 .upgrade-tasks {
   display: grid;
   gap: 12px;
+}
+.cached-releases {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.cached-release-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-subtle);
+}
+.confirm-body {
+  display: grid;
+  gap: 18px;
+}
+.confirm-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--label);
+  line-height: 1.55;
+}
+.version-upgrade-tag {
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+.version-upgrade-tag:hover {
+  background: color-mix(in srgb, var(--brand) 20%, transparent);
 }
 .sr-only {
   position: absolute;

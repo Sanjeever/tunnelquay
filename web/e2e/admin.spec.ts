@@ -119,6 +119,9 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await expect(
     page.getByLabel("一键下载并接入（Linux / macOS）"),
   ).toContainText("/api/client/install.sh?connect=");
+  await expect(
+    page.getByLabel("一键下载并接入（Windows PowerShell）"),
+  ).toContainText("/api/client/binary?os=windows&arch=amd64");
   await page.getByText("systemd 常驻服务配置", { exact: true }).click();
   await expect(page.getByLabel("系统服务安装命令")).toHaveValue(
     new RegExp(`sudo tunnelquay-client -service install -connect 'tq://\\S+@${address}'`),
@@ -131,8 +134,8 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await expect(page.getByLabel("客户端接入地址")).toHaveValue(address);
   await page.getByRole("button", { name: "保存设置" }).click();
   await expect(page.getByRole("button", { name: "已保存" })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "重置接入凭据" }).click();
+  await page.getByRole("button", { name: "确认重置", exact: true }).click();
   await expect(page.getByRole("button", { name: "已重置凭据" })).toBeVisible();
   await page.getByRole("link", { name: "设备", exact: true }).click();
   await expect(page.getByText("在线", { exact: true })).toBeVisible();
@@ -274,18 +277,18 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByRole("link", { name: "设备", exact: true }).click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", { name: "撤销 本地设备 的身份", exact: true })
     .click();
+  await page.getByRole("button", { name: "确认撤销", exact: true }).click();
   await expect(page.getByText("已撤销", { exact: true })).toHaveCount(1);
   await expect.poll(() => client.exitCode).toBe(1);
   await page.screenshot({
     path: "test-results/identity-revoked-mobile.png",
     fullPage: true,
   });
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "删除 本地设备", exact: true }).click();
+  await page.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.getByText("暂无设备", { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });

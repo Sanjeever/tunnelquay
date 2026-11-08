@@ -98,6 +98,56 @@ export function Modal({
   );
 }
 
+export function ConfirmModal({
+  title,
+  description,
+  confirmText = "确认",
+  destructive = true,
+  busy = false,
+  onConfirm,
+  close,
+}: {
+  title: string;
+  description: ReactNode;
+  confirmText?: string;
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void | Promise<void>;
+  close: () => void;
+}) {
+  return (
+    <Modal
+      title={title}
+      close={() => {
+        if (!busy) close();
+      }}
+    >
+      <div className="confirm-body">
+        <p className="confirm-text">{description}</p>
+        <footer>
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy}
+            onClick={close}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            variant={destructive ? "destructive" : "default"}
+            disabled={busy}
+            onClick={() => void onConfirm()}
+          >
+            {busy && <Loader2 size={14} className="spin" />}
+            {confirmText}
+          </Button>
+        </footer>
+      </div>
+    </Modal>
+  );
+}
+
 export function Drawer({
   title,
   subtitle,

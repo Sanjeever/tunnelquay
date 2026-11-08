@@ -11,19 +11,45 @@ import {
 } from "lucide-react";
 import { api, time, useLoad, type Device, type Settings } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { Empty, ErrorMessage, Modal, State } from "../components/common";
+import {
+  ConfirmModal,
+  Empty,
+  ErrorMessage,
+  Modal,
+  State,
+} from "../components/common";
 import { UpgradePanel } from "../components/UpgradePanel";
 
-export function Devices() {
+function isOutdatedVersion(current: string, target: string): boolean {
+  const parse = (v: string) => {
+    const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(v.trim());
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+  const a = parse(current);
+  const b = parse(target);
+  if (!a || !b) return false;
+  for (let i = 0; i < 3; i++) {
+    if (a[i] < b[i]) return true;
+    if (a[i] > b[i]) return false;
+  }
+  return false;
+}
+
+export function Devices({ serverVersion = "" }: { serverVersion?: string }) {
   const devices = useLoad<Device[]>("/devices", []);
   const [rename, setRename] = useState<Device | null>(null);
+  const [confirmRevoke, setConfirmRevoke] = useState<Device | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Device | null>(null);
+  const [upgradeTargetId, setUpgradeTargetId] = useState<string | null>(null);
   const [command, setCommand] = useState<string | null>(null);
   const [installScript, setInstallScript] = useState<string>("");
+  const [windowsScript, setWindowsScript] = useState<string>("");
   const [serviceCmd, setServiceCmd] = useState<string>("");
   const [systemdUnit, setSystemdUnit] = useState<string>("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [scriptCopied, setScriptCopied] = useState(false);
+  const [winCopied, setWinCopied] = useState(false);
   const [serviceCopied, setServiceCopied] = useState(false);
   const [unitCopied, setUnitCopied] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -37,13 +63,18 @@ export function Devices() {
         return;
       }
       const connectURI = `tq://${settings.credential}@${target}`;
+      const psBinaryUrl = `${window.location.origin}/api/client/binary?os=windows&arch=amd64&credential=${encodeURIComponent(settings.credential)}`;
       setCopied(false);
       setScriptCopied(false);
+      setWinCopied(false);
       setServiceCopied(false);
       setUnitCopied(false);
       setCommand(`tunnelquay-client -connect '${connectURI}'`);
       setInstallScript(
         `curl -fsSL '${window.location.origin}/api/client/install.sh?connect=${encodeURIComponent(connectURI)}' | sudo sh`,
+      );
+      setWindowsScript(
+        `$d="$env:ProgramData\\TunnelQuay"; New-Item -ItemType Directory -Force -Path $d | Out-Null; Invoke-WebRequest -UseBasicParsing "${psBinaryUrl}" -OutFile "$d\\tunnelquay-client.exe"; & "$d\\tunnelquay-client.exe" -service install -connect "${connectURI}"`,
       );
       setServiceCmd(
         `sudo tunnelquay-client -service install -connect '${connectURI}'`,
@@ -69,33 +100,29 @@ export function Devices() {
     }
   }
   async function revoke(device: Device) {
-    if (
-      !window.confirm(
-        `撤销“${device.name}”（${device.id.slice(0, 12)}）的身份？当前连接将断开，关联隧道将停止。`,
-      )
-    )
-      return;
     setError("");
     setBusy(true);
     try {
       await api(`/devices/${encodeURIComponent(device.id)}/revoke`, "POST");
+      setConfirmRevoke(null);
       devices.refresh();
     } catch (e) {
       setError((e as Error).message);
+      setConfirmRevoke(null);
     } finally {
       setBusy(false);
     }
   }
   async function remove(device: Device) {
-    if (!window.confirm(`删除离线设备“${device.name}”？关联隧道将一并删除。`))
-      return;
     setError("");
     setBusy(true);
     try {
       await api(`/devices/${encodeURIComponent(device.id)}`, "DELETE");
+      setConfirmDelete(null);
       devices.refresh();
     } catch (e) {
       setError((e as Error).message);
+      setConfirmDelete(null);
     } finally {
       setBusy(false);
     }
@@ -107,7 +134,11 @@ export function Devices() {
           设备 <span className="count">{devices.data.length}</span>
         </h1>
         <div className="actions">
-          <UpgradePanel devices={devices.data} />
+          <UpgradePanel
+            devices={devices.data}
+            targetDeviceId={upgradeTargetId}
+            onCloseTarget={() => setUpgradeTargetId(null)}
+          />
           <Button onClick={() => void connect()}>
             <Plus size={15} />
             接入设备
@@ -150,7 +181,21 @@ export function Devices() {
                         }
                       />
                     </td>
-                    <td className="mono">{d.version}</td>
+                    <td className="mono">
+                      <span>{d.version}</span>
+                      {!d.revoked &&
+                        d.online &&
+                        isOutdatedVersion(d.version, serverVersion) && (
+                          <button
+                            type="button"
+                            className="version-upgrade-tag"
+                            title={`服务端当前版本 ${serverVersion}，点击发起客户端升级`}
+                            onClick={() => setUpgradeTargetId(d.id)}
+                          >
+                            可升级
+                          </button>
+                        )}
+                    </td>
                     <td
                       className={`mono ${!d.online || d.rtt === null ? "muted" : d.rtt <= 50 ? "good" : d.rtt <= 150 ? "warn" : "bad"}`}
                       title="往返延迟 RTT"
@@ -168,7 +213,7 @@ export function Devices() {
                             size="sm"
                             aria-label={`撤销 ${d.name} 的身份`}
                             disabled={busy}
-                            onClick={() => void revoke(d)}
+                            onClick={() => setConfirmRevoke(d)}
                           >
                             <Ban size={14} />
                           </Button>
@@ -179,7 +224,7 @@ export function Devices() {
                             size="sm"
                             aria-label={`删除 ${d.name}`}
                             disabled={busy}
-                            onClick={() => void remove(d)}
+                            onClick={() => setConfirmDelete(d)}
                           >
                             <Trash2 size={14} />
                           </Button>
@@ -266,6 +311,34 @@ export function Devices() {
                 className="mono"
               />
             </div>
+            <div className="field-group">
+              <div className="label-row">
+                <label htmlFor="windows_script">
+                  一键下载并接入（Windows PowerShell）
+                </label>
+                <button
+                  type="button"
+                  className="text-button small"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(windowsScript);
+                      setWinCopied(true);
+                    } catch {
+                      setError("复制失败，请手动选择 PowerShell 命令");
+                    }
+                  }}
+                >
+                  {winCopied ? "已复制命令" : "复制 PowerShell 命令"}
+                </button>
+              </div>
+              <textarea
+                id="windows_script"
+                readOnly
+                value={windowsScript}
+                rows={3}
+                className="mono"
+              />
+            </div>
             <details>
               <summary>systemd 常驻服务配置</summary>
               <div className="field-group" style={{ marginBottom: 12 }}>
@@ -346,6 +419,26 @@ export function Devices() {
             </Button>
           </footer>
         </Modal>
+      )}
+      {confirmRevoke && (
+        <ConfirmModal
+          title="撤销设备身份"
+          description={`撤销“${confirmRevoke.name}”（${confirmRevoke.id.slice(0, 12)}）的身份？当前连接将断开，关联隧道将停止。`}
+          confirmText="确认撤销"
+          busy={busy}
+          onConfirm={() => revoke(confirmRevoke)}
+          close={() => setConfirmRevoke(null)}
+        />
+      )}
+      {confirmDelete && (
+        <ConfirmModal
+          title="删除离线设备"
+          description={`删除离线设备“${confirmDelete.name}”？关联隧道将一并删除。`}
+          confirmText="确认删除"
+          busy={busy}
+          onConfirm={() => remove(confirmDelete)}
+          close={() => setConfirmDelete(null)}
+        />
       )}
     </>
   );

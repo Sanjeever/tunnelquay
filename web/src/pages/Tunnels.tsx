@@ -21,6 +21,7 @@ import {
 } from "../lib/api";
 import { Button } from "../components/ui/button";
 import {
+  ConfirmModal,
   CopyAction,
   Drawer,
   Empty,
@@ -45,6 +46,7 @@ export function Tunnels() {
   const [params] = useSearchParams();
   const [edit, setEdit] = useState<Partial<Tunnel> | null>(null);
   const [detail, setDetail] = useState<Tunnel | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Tunnel | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [probing, setProbing] = useState<string | null>(null);
@@ -134,13 +136,18 @@ export function Tunnels() {
     }
   }
   async function remove(t: Tunnel) {
-    if (!window.confirm(`删除隧道“${t.name}”？关联连接将立即断开。`)) return;
+    setBusy(true);
     setError("");
     try {
       await api(`/tunnels/${t.id}`, "DELETE");
+      setConfirmDelete(null);
+      if (detail?.id === t.id) setDetail(null);
       tunnels.refresh();
     } catch (e) {
       setError((e as Error).message);
+      setConfirmDelete(null);
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -296,7 +303,7 @@ export function Tunnels() {
                         variant="ghost"
                         size="sm"
                         aria-label={`删除 ${t.name}`}
-                        onClick={() => void remove(t)}
+                        onClick={() => setConfirmDelete(t)}
                       >
                         <Trash2 size={14} />
                       </Button>
@@ -583,6 +590,16 @@ export function Tunnels() {
           <ErrorMessage message={detail.error} />
           <ErrorMessage message={detail.target_error} />
         </Drawer>
+      )}
+      {confirmDelete && (
+        <ConfirmModal
+          title="删除隧道"
+          description={`删除隧道“${confirmDelete.name}”？关联连接将立即断开。`}
+          confirmText="确认删除"
+          busy={busy}
+          onConfirm={() => remove(confirmDelete)}
+          close={() => setConfirmDelete(null)}
+        />
       )}
     </>
   );

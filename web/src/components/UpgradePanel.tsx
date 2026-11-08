@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Loader2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { api, time, useLoad, type Device } from "../lib/api";
 import { Button } from "./ui/button";
-import { ErrorMessage, Modal } from "./common";
+import { ConfirmModal, ErrorMessage, Modal } from "./common";
 
 interface Release {
   version: string;
@@ -17,8 +17,21 @@ interface Task {
   error: string;
   updated: string;
 }
-export function UpgradePanel({ devices }: { devices: Device[] }) {
+export function UpgradePanel({
+  devices,
+  targetDeviceId,
+  onCloseTarget,
+}: {
+  devices: Device[];
+  targetDeviceId?: string | null;
+  onCloseTarget?: () => void;
+}) {
   const [open, setOpen] = useState(false);
+  const isOpen = open || !!targetDeviceId;
+  function close() {
+    setOpen(false);
+    onCloseTarget?.();
+  }
   return (
     <>
       <Button
@@ -28,25 +41,38 @@ export function UpgradePanel({ devices }: { devices: Device[] }) {
       >
         客户端升级
       </Button>
-      {open && (
-        <Modal title="客户端升级" close={() => setOpen(false)}>
-          <UpgradeForm devices={devices} />
+      {isOpen && (
+        <Modal title="客户端升级" close={close}>
+          <UpgradeForm
+            devices={devices}
+            initialDeviceId={targetDeviceId || undefined}
+          />
         </Modal>
       )}
     </>
   );
 }
-function UpgradeForm({ devices }: { devices: Device[] }) {
-  const [deviceID, setDeviceID] = useState(devices[0]?.id || "");
-  const device = devices.find((d) => d.id === deviceID)!;
+function UpgradeForm({
+  devices,
+  initialDeviceId,
+}: {
+  devices: Device[];
+  initialDeviceId?: string;
+}) {
+  const [deviceID, setDeviceID] = useState(
+    initialDeviceId || devices[0]?.id || "",
+  );
+  const device = devices.find((d) => d.id === deviceID) || devices[0]!;
   const releases = useLoad<{ cached: Release[]; trust_configured: boolean }>(
     "/releases",
     { cached: [], trust_configured: false },
   );
-  const tasks = useLoad<Task[]>(`/devices/${deviceID}/upgrades`, []);
+  const tasks = useLoad<Task[]>(`/devices/${device.id}/upgrades`, []);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [official, setOfficial] = useState<string[]>([]);
+  const [confirmVersion, setConfirmVersion] = useState<string | null>(null);
+  const [deletingVersion, setDeletingVersion] = useState<string | null>(null);
   useEffect(() => {
     if (!releases.data.trust_configured) return;
     let active = true;
@@ -61,26 +87,37 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
       active = false;
     };
   }, [releases.data.trust_configured]);
-  async function start(e: FormEvent<HTMLFormElement>) {
+  function start(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const values = new FormData(e.currentTarget);
-    if (
-      !window.confirm(
-        `升级“${device.name}”后客户端将退出，需要外部守护或人工重启。继续？`,
-      )
-    )
-      return;
+    const v = String(values.get("version") || "");
+    if (!v) return;
+    setConfirmVersion(v);
+  }
+  async function executeUpgrade(version: string) {
     setBusy(true);
     setError("");
     try {
-      await api(`/devices/${deviceID}/upgrades`, "POST", {
-        version: values.get("version"),
-      });
+      await api(`/devices/${device.id}/upgrades`, "POST", { version });
+      setConfirmVersion(null);
       tasks.refresh();
     } catch (e) {
       setError((e as Error).message);
+      setConfirmVersion(null);
     } finally {
       setBusy(false);
+    }
+  }
+  async function deleteCachedVersion(version: string) {
+    setDeletingVersion(version);
+    setError("");
+    try {
+      await api(`/releases/${encodeURIComponent(version)}`, "DELETE");
+      releases.refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeletingVersion(null);
     }
   }
   async function check() {
@@ -146,11 +183,20 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
   const candidateVersions = Array.from(
     new Set([...compatible.map((r) => r.version), ...official]),
   );
+  const groupedCached = new Map<string, string[]>();
+  for (const r of releases.data.cached) {
+    const list = groupedCached.get(r.version) || [];
+    list.push(`${r.os}/${r.arch}`);
+    groupedCached.set(r.version, list);
+  }
   return (
     <div className="upgrade-form">
       <label>
         设备
-        <select value={deviceID} onChange={(e) => setDeviceID(e.target.value)}>
+        <select
+          value={device.id}
+          onChange={(e) => setDeviceID(e.target.value)}
+        >
           {devices.map((d) => (
             <option key={d.id} value={d.id}>
               {d.name} · {d.version}
@@ -208,6 +254,33 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
       )}
       <details>
         <summary>发行包</summary>
+        {groupedCached.size > 0 && (
+          <div className="cached-releases" aria-label="已缓存发行版本">
+            {Array.from(groupedCached.entries()).map(([version, platforms]) => (
+              <div key={version} className="cached-release-row">
+                <div>
+                  <strong className="mono medium">{version}</strong>
+                  <div className="muted small mono">{platforms.join(", ")}</div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`清理缓存版本 ${version}`}
+                  disabled={busy || deletingVersion === version}
+                  onClick={() => void deleteCachedVersion(version)}
+                >
+                  {deletingVersion === version ? (
+                    <Loader2 size={14} className="spin" />
+                  ) : (
+                    <Trash2 size={14} />
+                  )}
+                  清理
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
         <Button
           type="button"
           variant="outline"
@@ -242,6 +315,17 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
           </Button>
         </form>
       </details>
+      {confirmVersion && (
+        <ConfirmModal
+          title="发起客户端升级"
+          description={`升级“${device.name}”至 ${confirmVersion} 后客户端将退出，由常驻服务守护或人工重启后生效。`}
+          confirmText="确认升级"
+          destructive={false}
+          busy={busy}
+          onConfirm={() => executeUpgrade(confirmVersion)}
+          close={() => setConfirmVersion(null)}
+        />
+      )}
     </div>
   );
 }

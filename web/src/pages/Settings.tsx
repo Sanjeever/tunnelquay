@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Check, Loader2 } from "lucide-react";
 import { api, useLoad, type Settings as SettingsData } from "../lib/api";
 import { Button } from "../components/ui/button";
-import { ErrorMessage } from "../components/common";
+import { ConfirmModal, ErrorMessage } from "../components/common";
 
 export function Settings() {
   const settings = useLoad<SettingsData | null>("/settings", null);
@@ -10,6 +10,7 @@ export function Settings() {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [rotated, setRotated] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordSaved, setPasswordSaved] = useState(false);
   async function save(e: FormEvent<HTMLFormElement>) {
@@ -32,12 +33,6 @@ export function Settings() {
     }
   }
   async function rotateCredential() {
-    if (
-      !window.confirm(
-        "重置接入凭据后，旧接入命令将无法登记新设备，已登记设备保持正常重连。继续？",
-      )
-    )
-      return;
     setBusy(true);
     setError("");
     setRotated(false);
@@ -45,8 +40,10 @@ export function Settings() {
       const next = await api<SettingsData>("/settings/credential", "POST");
       settings.setData(next);
       setRotated(true);
+      setConfirmRotate(false);
     } catch (e) {
       setError((e as Error).message);
+      setConfirmRotate(false);
     } finally {
       setBusy(false);
     }
@@ -129,7 +126,7 @@ export function Settings() {
                   type="button"
                   variant="outline"
                   disabled={busy}
-                  onClick={() => void rotateCredential()}
+                  onClick={() => setConfirmRotate(true)}
                 >
                   {rotated && <Check size={14} className="good icon-pop" />}
                   {rotated ? "已重置凭据" : "重置接入凭据"}
@@ -169,6 +166,16 @@ export function Settings() {
           </form>
         </section>
       </div>
+      {confirmRotate && (
+        <ConfirmModal
+          title="重置接入凭据"
+          description="重置接入凭据后，旧接入命令将无法登记新设备，已登记设备保持正常重连。"
+          confirmText="确认重置"
+          busy={busy}
+          onConfirm={rotateCredential}
+          close={() => setConfirmRotate(false)}
+        />
+      )}
     </>
   );
 }

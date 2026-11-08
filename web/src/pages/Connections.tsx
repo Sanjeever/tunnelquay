@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
+import { Loader2, Unplug } from "lucide-react";
 import {
+  api,
   bytes,
   protocolName,
   time,
@@ -22,15 +24,32 @@ export function Connections() {
   const [params, setParams] = useSearchParams();
   const query = new URLSearchParams(params);
   if (!query.has("state")) query.set("state", "current");
-  const { data, loading, error } = useLoad<Result>(`/connections?${query}`, {
+  const isCurrent = query.get("state") === "current";
+  const connections = useLoad<Result>(`/connections?${query}`, {
     items: [],
     total: 0,
     page: 1,
     limit: 50,
   });
+  const { data, loading, error } = connections;
   const devices = useLoad<Device[]>("/devices", []);
   const tunnels = useLoad<Tunnel[]>("/tunnels", []);
   const [detail, setDetail] = useState<Connection | null>(null);
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState("");
+  async function disconnect(c: Connection) {
+    setClosingId(c.id);
+    setActionError("");
+    try {
+      await api(`/connections/${encodeURIComponent(c.id)}`, "DELETE");
+      if (detail?.id === c.id) setDetail(null);
+      connections.refresh();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setClosingId(null);
+    }
+  }
   function filters(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const values = new FormData(e.currentTarget);
@@ -134,7 +153,7 @@ export function Connections() {
           重置
         </Button>
       </form>
-      <ErrorMessage message={error} />
+      <ErrorMessage message={actionError || error} />
       {data.items.length ? (
         <div className="table-wrap">
           <table>
@@ -147,6 +166,11 @@ export function Connections() {
                 <th>开始时间</th>
                 <th>流量 ↑ / ↓</th>
                 <th>结果</th>
+                {isCurrent && (
+                  <th>
+                    <span className="sr-only">操作</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -171,6 +195,26 @@ export function Connections() {
                   <td>
                     <State value={c.result} />
                   </td>
+                  {isCurrent && (
+                    <td>
+                      <div className="actions">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`断开连接 ${c.source}`}
+                          disabled={closingId === c.id}
+                          onClick={() => void disconnect(c)}
+                        >
+                          {closingId === c.id ? (
+                            <Loader2 size={14} className="spin" />
+                          ) : (
+                            <Unplug size={14} />
+                          )}
+                          断开
+                        </Button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -210,6 +254,23 @@ export function Connections() {
           title="连接详情"
           subtitle={`${detail.tunnel_name} · ${detail.device_name}`}
           close={() => setDetail(null)}
+          footer={
+            detail.result === "active" ? (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={closingId === detail.id}
+                onClick={() => void disconnect(detail)}
+              >
+                {closingId === detail.id ? (
+                  <Loader2 size={14} className="spin" />
+                ) : (
+                  <Unplug size={14} />
+                )}
+                断开连接
+              </Button>
+            ) : undefined
+          }
         >
           <dl className="details">
             <div className="detail-row">
