@@ -132,7 +132,7 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 }
 
 func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, error) {
-	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 	defer cancel()
 	stream, err := p.session.Open(ctx)
 	if err != nil {
@@ -149,7 +149,7 @@ func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, err
 		return nil, errors.New("连接已关闭")
 	default:
 	}
-	stream.SetDeadline(time.Now().Add(10 * time.Second))
+	stream.SetDeadline(time.Now().Add(20 * time.Second))
 	m := protocol.Message{Type: "dial", Network: network, Target: target}
 	if err = protocol.Write(stream, m); err != nil {
 		transport.Abort(stream)

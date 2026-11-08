@@ -29,7 +29,7 @@ func (c *Client) acceptStreams(ctx context.Context, session *transport.Session) 
 
 func (c *Client) forward(ctx context.Context, stream protocol.Stream) {
 	defer stream.Close()
-	stream.SetDeadline(time.Now().Add(10 * time.Second))
+	stream.SetDeadline(time.Now().Add(20 * time.Second))
 	var m protocol.Message
 	if protocol.Read(stream, &m) != nil {
 		return

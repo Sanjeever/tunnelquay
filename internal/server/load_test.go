@@ -52,7 +52,7 @@ func TestRepresentativeLoad(t *testing.T) {
 	sampleDone := make(chan struct{})
 	go func() {
 		defer close(sampleDone)
-		ticker := time.NewTicker(10 * time.Millisecond)
+		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
 		for {
 			var m runtime.MemStats

@@ -28,7 +28,7 @@ func NewTCP(c net.Conn, server bool) (*Session, error) {
 	cfg.EnableKeepAlive = true
 	cfg.KeepAliveInterval = protocol.HeartbeatInterval
 	cfg.ConnectionWriteTimeout = protocol.HeartbeatTimeout
-	cfg.StreamOpenTimeout = protocol.ControlRequestTimeout
+	cfg.StreamOpenTimeout = protocol.HeartbeatTimeout
 	cfg.StreamCloseTimeout = 0
 	var s *yamux.Session
 	var err error
