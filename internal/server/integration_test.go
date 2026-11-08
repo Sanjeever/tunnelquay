@@ -509,6 +509,26 @@ func TestProbeAllowCIDRsDeleteDeviceAndRotateCredential(t *testing.T) {
 	if _, err = io.ReadFull(allowedConn, one); err != nil || string(one) != "P" {
 		t.Fatalf("白名单来源 IP 访问失败：%v %q", err, string(one))
 	}
+	var activeID string
+	waitFor(t, func() bool {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		for cid := range s.connections {
+			activeID = cid
+			return true
+		}
+		return false
+	})
+	if err = s.CloseConnection(activeID); err != nil {
+		t.Fatalf("主动断开活动连接失败：%v", err)
+	}
+	if _, err = allowedConn.Read(one); err == nil {
+		t.Fatal("主动断开后客户端连接应已关闭")
+	}
+	items, _, err := s.Store.History(store.Filter{TunnelID: tun.ID, State: "history", Page: 1, Limit: 10})
+	if err != nil || len(items) == 0 || items[0].Reason != "管理员主动断开" {
+		t.Fatalf("主动断开记录未写入历史：%v %+v", err, items)
+	}
 	oldCred := s.Identity.Credential()
 	if err = s.Identity.RotateSecret(s.Options.DataDir); err != nil || s.Identity.Credential() == oldCred {
 		t.Fatalf("重置登记凭据失败：%v", err)

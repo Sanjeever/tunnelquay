@@ -135,6 +135,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 		respond(w, 200, map[string]bool{"ok": true})
 	})
 	protected.HandleFunc("GET /api/connections", s.listConnections)
+	protected.HandleFunc("DELETE /api/connections/{id}", s.closeConnection)
 	protected.HandleFunc("GET /api/settings", s.getSettings)
 	protected.HandleFunc("PUT /api/settings", s.saveSettings)
 	protected.HandleFunc("POST /api/settings/credential", s.rotateCredential)
@@ -142,6 +143,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	protected.HandleFunc("GET /api/releases/official", s.officialReleases)
 	protected.HandleFunc("POST /api/releases/import", s.importRelease)
 	protected.HandleFunc("POST /api/releases/download", s.downloadRelease)
+	protected.HandleFunc("DELETE /api/releases/{version}", s.deleteRelease)
 	protected.HandleFunc("GET /api/devices/{id}/upgrades", s.upgrades)
 	protected.HandleFunc("POST /api/devices/{id}/upgrades", s.createUpgrade)
 	protected.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -438,6 +440,13 @@ func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string]any{"items": items, "total": total, "page": page, "limit": limit})
+}
+func (s *Server) closeConnection(w http.ResponseWriter, r *http.Request) {
+	if err := s.CloseConnection(r.PathValue("id")); err != nil {
+		apiError(w, 404, "not_found", err)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	a, b, err := s.portRange()

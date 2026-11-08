@@ -63,7 +63,7 @@ func (s *Server) cachePackage(signed update.Signed, archive string) (cachedRelea
 		return cachedRelease{}, err
 	}
 	if size+a.Size > 1<<30 {
-		return cachedRelease{}, errors.New("发行包缓存已达到 1 GiB，请停止服务端后清理不再使用的版本")
+		return cachedRelease{}, errors.New("发行包缓存已达到 1 GiB，请先清理不再使用的缓存版本")
 	}
 	dir := filepath.Join(root, m.Version)
 	if err = os.MkdirAll(dir, 0700); err != nil {
@@ -385,6 +385,48 @@ func (s *Server) downloadRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, result)
+}
+func (s *Server) deleteRelease(w http.ResponseWriter, r *http.Request) {
+	version := strings.TrimSpace(r.PathValue("version"))
+	if !update.ValidVersion(version) {
+		apiError(w, 400, "invalid_version", errors.New("发行版本无效"))
+		return
+	}
+	s.upgradeMu.Lock()
+	defer s.upgradeMu.Unlock()
+	if !s.packageMu.TryLock() {
+		apiError(w, 409, "busy", errors.New("已有发行包正在准备，请稍后重试"))
+		return
+	}
+	defer s.packageMu.Unlock()
+	var tasks []update.Task
+	if err := s.Store.All("upgrades", &tasks); err != nil {
+		apiError(w, 500, "storage_failed", err)
+		return
+	}
+	for _, task := range tasks {
+		if task.Version != version || task.Stage == "completed" || task.Stage == "failed" {
+			continue
+		}
+		if updated, err := time.Parse(time.RFC3339Nano, task.Updated); err == nil && time.Since(updated) > 5*time.Minute {
+			continue
+		}
+		apiError(w, 409, "in_use", errors.New("该版本存在进行中的客户端升级任务，暂不能清理"))
+		return
+	}
+	dir := filepath.Join(s.cacheDir(), version)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		apiError(w, 404, "not_found", errors.New("该版本缓存不存在"))
+		return
+	} else if err != nil {
+		apiError(w, 500, "cache_failed", err)
+		return
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		apiError(w, 500, "cache_failed", err)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
 }
 func (s *Server) upgrades(w http.ResponseWriter, r *http.Request) {
 	var tasks []update.Task

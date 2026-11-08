@@ -425,4 +425,24 @@ func TestAutoFetchUpgradeAndClientBinaryDistribution(t *testing.T) {
 	if !bytes.Equal(gotBinary, binaryPayload) {
 		t.Fatalf("下载的客户端程序内容不符：%q", string(gotBinary))
 	}
+
+	delBusyReq := httptest.NewRequest("DELETE", "/api/releases/0.2.0", nil)
+	delBusyReq.SetPathValue("version", "0.2.0")
+	delBusyRes := httptest.NewRecorder()
+	s.deleteRelease(delBusyRes, delBusyReq)
+	if delBusyRes.Code != 409 {
+		t.Fatalf("存在进行中的升级任务时清理版本缓存应返回 409，实际：%d %s", delBusyRes.Code, delBusyRes.Body.String())
+	}
+
+	s.confirmUpgrade(id, "0.2.0")
+	delOKReq := httptest.NewRequest("DELETE", "/api/releases/0.2.0", nil)
+	delOKReq.SetPathValue("version", "0.2.0")
+	delOKRes := httptest.NewRecorder()
+	s.deleteRelease(delOKRes, delOKReq)
+	if delOKRes.Code != 200 {
+		t.Fatalf("升级任务完成后清理版本缓存失败：%d %s", delOKRes.Code, delOKRes.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(s.cacheDir(), "0.2.0")); !os.IsNotExist(err) {
+		t.Fatalf("清理版本缓存后目录仍存在：%v", err)
+	}
 }

@@ -131,6 +131,17 @@ func (s *Server) finish(c *activeConnection, result, reason string) {
 	s.historyMu.Unlock()
 }
 
+func (s *Server) CloseConnection(id string) error {
+	s.mu.RLock()
+	c := s.connections[id]
+	s.mu.RUnlock()
+	if c == nil {
+		return errors.New("当前连接不存在或已结束")
+	}
+	s.finish(c, "closed", "管理员主动断开")
+	return s.flushHistory()
+}
+
 func (s *Server) openForward(c *activeConnection, p *peer) (protocol.Stream, error) {
 	ctx, cancel := context.WithTimeout(s.ctx, 20*time.Second)
 	defer cancel()
