@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { api, time, useLoad, type Device } from "../lib/api";
 import { Button } from "./ui/button";
 import { ErrorMessage, Modal } from "./common";
@@ -46,6 +46,20 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [official, setOfficial] = useState<string[]>([]);
+  useEffect(() => {
+    if (!releases.data.trust_configured) return;
+    let active = true;
+    api<string[]>("/releases/official")
+      .then((list) => {
+        if (active) setOfficial(list);
+      })
+      .catch(() => {
+        /* 忽略离线环境自动查询失败 */
+      });
+    return () => {
+      active = false;
+    };
+  }, [releases.data.trust_configured]);
   async function start(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const values = new FormData(e.currentTarget);
@@ -127,6 +141,10 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
   const compatible = releases.data.cached.filter(
     (r) => r.os === device.os && r.arch === device.arch,
   );
+  const cachedSet = new Set(compatible.map((r) => r.version));
+  const candidateVersions = Array.from(
+    new Set([...compatible.map((r) => r.version), ...official]),
+  );
   return (
     <div className="upgrade-form">
       <label>
@@ -153,22 +171,22 @@ function UpgradeForm({ devices }: { devices: Device[] }) {
       <form onSubmit={start}>
         <label>
           目标版本
-          <select name="version" required disabled={!compatible.length}>
-            {!compatible.length && (
+          <select name="version" required disabled={!candidateVersions.length}>
+            {!candidateVersions.length && (
               <option value="">暂无适用的已验证发行包</option>
             )}
-            {compatible.map((r) => (
-              <option key={r.artifact} value={r.version}>
-                {r.version}
+            {candidateVersions.map((v) => (
+              <option key={v} value={v}>
+                {cachedSet.has(v) ? v : `${v}（自动下载）`}
               </option>
             ))}
           </select>
         </label>
         <Button
           type="submit"
-          disabled={busy || !device.online || !compatible.length}
+          disabled={busy || !device.online || !candidateVersions.length}
         >
-          发起升级
+          {busy ? "正在处理…" : "发起升级"}
         </Button>
       </form>
       {tasks.data.length > 0 && (

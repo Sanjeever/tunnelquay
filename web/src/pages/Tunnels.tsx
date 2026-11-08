@@ -20,6 +20,15 @@ import {
 import { Button } from "../components/ui/button";
 import { Empty, ErrorMessage, Modal, State } from "../components/common";
 
+const PRESETS = [
+  { label: "SSH (22)", name: "SSH", protocol: "tcp", port: 22 },
+  { label: "HTTP (80)", name: "HTTP", protocol: "tcp", port: 80 },
+  { label: "HTTPS (443)", name: "HTTPS", protocol: "tcp", port: 443 },
+  { label: "RDP (3389)", name: "RDP", protocol: "both", port: 3389 },
+  { label: "MySQL (3306)", name: "MySQL", protocol: "tcp", port: 3306 },
+  { label: "PostgreSQL (5432)", name: "PostgreSQL", protocol: "tcp", port: 5432 },
+] as const;
+
 export function Tunnels() {
   const tunnels = useLoad<Tunnel[]>("/tunnels", []);
   const devices = useLoad<Device[]>("/devices", []);
@@ -238,6 +247,26 @@ export function Tunnels() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        aria-label={`克隆 ${t.name}`}
+                        onClick={() => {
+                          setError("");
+                          setEdit({
+                            name: `${t.name}-副本`,
+                            device_id: t.device_id,
+                            protocol: t.protocol,
+                            host: t.host,
+                            target_port: t.target_port,
+                            public_port: 0,
+                            allow_cidrs: t.allow_cidrs,
+                            enabled: true,
+                          });
+                        }}
+                      >
+                        <Copy size={14} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         aria-label={`编辑 ${t.name}`}
                         onClick={() => {
                           setError("");
@@ -278,11 +307,38 @@ export function Tunnels() {
           }}
         >
           <form onSubmit={submit}>
+            {!edit.id && (
+              <div className="preset-row" role="group" aria-label="常用服务预设">
+                {PRESETS.map((preset) => (
+                  <Button
+                    key={preset.name}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setEdit({
+                        ...edit,
+                        name:
+                          !edit.name ||
+                          PRESETS.some((p) => p.name === edit.name)
+                            ? preset.name
+                            : edit.name,
+                        protocol: preset.protocol,
+                        target_port: preset.port,
+                      })
+                    }
+                  >
+                    {preset.label}
+                  </Button>
+                ))}
+              </div>
+            )}
             <label>
               名称
               <input
                 name="name"
-                defaultValue={edit.name}
+                value={edit.name || ""}
+                onChange={(e) => setEdit({ ...edit, name: e.target.value })}
                 required
                 maxLength={128}
                 autoFocus
@@ -293,7 +349,15 @@ export function Tunnels() {
                 设备
                 <select
                   name="device_id"
-                  defaultValue={edit.device_id}
+                  value={
+                    edit.device_id ||
+                    devices.data.find((d) => !d.revoked)?.id ||
+                    devices.data[0]?.id ||
+                    ""
+                  }
+                  onChange={(e) =>
+                    setEdit({ ...edit, device_id: e.target.value })
+                  }
                   disabled={!!edit.id}
                 >
                   {devices.data.map((d) => (
@@ -316,7 +380,7 @@ export function Tunnels() {
                 <select
                   name="protocol"
                   aria-label="协议"
-                  value={edit.protocol}
+                  value={edit.protocol || "tcp"}
                   onChange={(e) =>
                     setEdit({ ...edit, protocol: e.target.value })
                   }
@@ -328,7 +392,12 @@ export function Tunnels() {
               </label>
               <label>
                 目标地址
-                <input name="host" defaultValue={edit.host} required />
+                <input
+                  name="host"
+                  value={edit.host || ""}
+                  onChange={(e) => setEdit({ ...edit, host: e.target.value })}
+                  required
+                />
               </label>
               <label>
                 目标端口
@@ -337,7 +406,15 @@ export function Tunnels() {
                   type="number"
                   min={1}
                   max={65535}
-                  defaultValue={edit.target_port}
+                  value={edit.target_port ?? ""}
+                  onChange={(e) =>
+                    setEdit({
+                      ...edit,
+                      target_port: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
                   required
                 />
               </label>
@@ -348,7 +425,13 @@ export function Tunnels() {
                   type="number"
                   min={0}
                   max={65535}
-                  defaultValue={edit.public_port || ""}
+                  value={edit.public_port || ""}
+                  onChange={(e) =>
+                    setEdit({
+                      ...edit,
+                      public_port: e.target.value ? Number(e.target.value) : 0,
+                    })
+                  }
                   placeholder="自动分配"
                 />
               </label>
@@ -356,7 +439,10 @@ export function Tunnels() {
                 <input
                   name="enabled"
                   type="checkbox"
-                  defaultChecked={edit.enabled}
+                  checked={!!edit.enabled}
+                  onChange={(e) =>
+                    setEdit({ ...edit, enabled: e.target.checked })
+                  }
                 />
                 启用
               </label>

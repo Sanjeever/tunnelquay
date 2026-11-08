@@ -10,9 +10,13 @@ export function Devices() {
   const devices = useLoad<Device[]>("/devices", []);
   const [rename, setRename] = useState<Device | null>(null);
   const [command, setCommand] = useState<string | null>(null);
+  const [installScript, setInstallScript] = useState<string>("");
+  const [serviceCmd, setServiceCmd] = useState<string>("");
   const [systemdUnit, setSystemdUnit] = useState<string>("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [scriptCopied, setScriptCopied] = useState(false);
+  const [serviceCopied, setServiceCopied] = useState(false);
   const [unitCopied, setUnitCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   async function connect() {
@@ -26,8 +30,16 @@ export function Devices() {
       }
       const connectURI = `tq://${settings.credential}@${target}`;
       setCopied(false);
+      setScriptCopied(false);
+      setServiceCopied(false);
       setUnitCopied(false);
-      setCommand(`tunnelquay-client -connect ${connectURI}`);
+      setCommand(`tunnelquay-client -connect '${connectURI}'`);
+      setInstallScript(
+        `curl -fsSL '${window.location.origin}/api/client/install.sh?connect=${encodeURIComponent(connectURI)}' | sudo sh`,
+      );
+      setServiceCmd(
+        `sudo tunnelquay-client -service install -connect '${connectURI}'`,
+      );
       setSystemdUnit(
         `[Unit]\nDescription=TunnelQuay Client\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nEnvironment="TUNNELQUAY_CONNECT=${connectURI}"\nExecStart=/usr/local/bin/tunnelquay-client\nRestart=always\nRestartSec=3\n\n[Install]\nWantedBy=multi-user.target`,
       );
@@ -218,10 +230,61 @@ export function Devices() {
           <div className="upgrade-form">
             <label>
               客户端命令
-              <textarea readOnly value={command} rows={3} className="mono" />
+              <textarea readOnly value={command} rows={2} className="mono" />
             </label>
+            <div className="field-group">
+              <div className="label-row">
+                <label htmlFor="install_script">一键下载并接入（Linux / macOS）</label>
+                <button
+                  type="button"
+                  className="text-button small"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(installScript);
+                      setScriptCopied(true);
+                    } catch {
+                      setError("复制失败，请手动选择脚本命令");
+                    }
+                  }}
+                >
+                  {scriptCopied ? "已复制脚本" : "复制一键脚本"}
+                </button>
+              </div>
+              <textarea
+                id="install_script"
+                readOnly
+                value={installScript}
+                rows={2}
+                className="mono"
+              />
+            </div>
             <details>
               <summary>systemd 常驻服务配置</summary>
+              <div className="field-group" style={{ marginBottom: 12 }}>
+                <div className="label-row">
+                  <label htmlFor="service_cmd">系统服务安装命令</label>
+                  <button
+                    type="button"
+                    className="text-button small"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(serviceCmd);
+                        setServiceCopied(true);
+                      } catch {
+                        setError("复制失败，请手动选择命令");
+                      }
+                    }}
+                  >
+                    {serviceCopied ? "已复制" : "复制安装命令"}
+                  </button>
+                </div>
+                <input
+                  id="service_cmd"
+                  readOnly
+                  value={serviceCmd}
+                  className="mono"
+                />
+              </div>
               <label>
                 /etc/systemd/system/tunnelquay-client.service
                 <textarea

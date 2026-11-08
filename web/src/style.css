@@ -282,6 +282,11 @@ label,
   justify-content: space-between;
   gap: 8px;
 }
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 form {
   display: grid;
   gap: 18px;

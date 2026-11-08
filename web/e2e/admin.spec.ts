@@ -109,9 +109,15 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await expect(page.getByText("在线", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "接入设备", exact: true }).click();
   await expect(page.getByLabel("客户端命令")).toHaveValue(
-    new RegExp(`tunnelquay-client -connect tq://\\S+@${address}`),
+    new RegExp(`tunnelquay-client -connect 'tq://\\S+@${address}'`),
   );
+  await expect(
+    page.getByLabel("一键下载并接入（Linux / macOS）"),
+  ).toContainText("/api/client/install.sh?connect=");
   await page.getByText("systemd 常驻服务配置", { exact: true }).click();
+  await expect(page.getByLabel("系统服务安装命令")).toHaveValue(
+    new RegExp(`sudo tunnelquay-client -service install -connect 'tq://\\S+@${address}'`),
+  );
   await expect(
     page.getByLabel("/etc/systemd/system/tunnelquay-client.service"),
   ).toContainText("Restart=always");
@@ -143,11 +149,19 @@ test("真实设备、隧道管理、连接筛选及响应式布局", async ({ pa
   await expect(page.getByText("本地设备", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "隧道", exact: true }).click();
   await page.getByRole("button", { name: "新建隧道", exact: true }).click();
+  await page.getByRole("button", { name: "SSH (22)", exact: true }).click();
+  await expect(page.getByLabel("名称", { exact: true })).toHaveValue("SSH");
+  await expect(page.getByLabel("目标端口", { exact: true })).toHaveValue("22");
   await page.getByLabel("名称", { exact: true }).fill("浏览器验收隧道");
   await page.getByLabel("目标端口", { exact: true }).fill(String(targetPort));
   await page.getByRole("button", { name: /填入当前 IP/ }).click();
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.getByText("监听就绪", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "克隆 浏览器验收隧道" }).click();
+  await expect(page.getByLabel("名称", { exact: true })).toHaveValue(
+    "浏览器验收隧道-副本",
+  );
+  await page.getByRole("button", { name: "取消", exact: true }).click();
   const tunnels = await page.request.get(`http://${address}/api/tunnels`);
   const data = await tunnels.json();
   const port = data[0].public_port;
